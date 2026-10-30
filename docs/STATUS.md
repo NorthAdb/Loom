@@ -2,11 +2,13 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-10-30 (repository bootstrap).
+Last updated: 2026-10-30 (Phase 0 engineering foundation).
 
 ## Done
 
 - [x] Repository bootstrap: README, vision, architecture, decisions, roadmap, status, security, contributing, MIT license, Python package skeleton (`loom` version marker only)
+- [x] Phase 0 engineering foundation: installable package (`pip install -e ".[dev]"`), pydantic-settings config with `.env` support and errors that name the variable, structured JSON logging with secret redaction, `loom version` and `loom doctor` CLI, pytest suite
+- [x] Real “how to run” instructions in README
 
 ## In progress
 
@@ -23,7 +25,6 @@ Last updated: 2026-10-30 (repository bootstrap).
 - [ ] Memory baseline: self-owned facts and preferences table
 - [ ] LangGraph orchestration
 - [ ] Local single-host Docker runtime
-- [ ] Real “how to run” instructions (README is still a placeholder)
 
 ### P1 — Calendar and email drafts
 
