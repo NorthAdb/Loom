@@ -4,7 +4,7 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Status:** repository bootstrap only. The agent runtime is not implemented. See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status:** Phase 0 engineering shell in place (installable package, config, structured logging, `loom version` / `loom doctor`, tests). The agent runtime is not implemented. See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Loom is
 
@@ -45,26 +45,37 @@ Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the 
 
 | Piece | Choice | In this tree |
 | --- | --- | --- |
-| Language | Python | Package skeleton only |
+| Language | Python | Engineering shell (config, logging, CLI) |
 | Orchestration | LangGraph | Not wired |
 | Optional later | Pi as exec / sub-agent | Absent |
 | Memory | Mem0 + self-owned facts/preferences; agentic memory later | Absent |
 | Runtime | Local / single-host Docker | Absent |
 | License | MIT | [LICENSE](LICENSE) |
 
-Dependencies are intentionally empty until a roadmap item needs them.
+Dependencies are added only when a roadmap item needs them. The current runtime dependency is pydantic-settings.
 
 ## How to run
 
-There is no agent to run. There is no Docker image, CLI, graph, or tool server.
-
-The package is a version marker:
+The engineering shell installs and runs. There is no agent behind it yet.
 
 ```bash
-PYTHONPATH=src python -c "import loom; print(loom.__version__)"
+python -m venv .venv
+source .venv/Scripts/activate    # Windows Git Bash; macOS/Linux: source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env             # then edit .env and set LOOM_ENV=dev
 ```
 
-Replace this section when a real entrypoint exists, and update [docs/STATUS.md](docs/STATUS.md) in the same change.
+With the virtualenv active:
+
+```bash
+loom version    # prints the package version, needs no config or .env
+loom doctor     # one line per check; exits 1 while a critical check fails
+pytest          # runs the test suite
+```
+
+`loom doctor` fails on a missing `.env`, a broken config (the message names the variable, e.g. `LOOM_ENV`), or a data directory it cannot create or write. A missing `LLM_API_KEY` is only a warning in Phase 0.
+
+从源码安装：建 venv 并 `pip install -e ".[dev]"`，复制 `.env.example` 为 `.env`，把 `LOOM_ENV` 设为 `dev`，然后运行 `loom version` 与 `loom doctor`。doctor 对缺失 `.env`、非法配置（错误信息会指名变量，如 `LOOM_ENV`）、不可写的数据目录判失败；`LLM_API_KEY` 在 Phase 0 缺失只是警告，不影响退出码。
 
 ## Docs
 
