@@ -1,11 +1,8 @@
 import json
 
+from conftest import read_audit
+
 from loom.audit import AuditLog, redact_args, summarize_args
-
-
-def read_lines(data_dir):
-    path = next((data_dir / "audit").glob("*.jsonl"))
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def raw_text(data_dir):
@@ -17,7 +14,7 @@ def test_append_creates_dated_file_with_one_record(tmp_path):
 
     log.append(run_id="r1", actor="human", tool="echo", args={"text": "hi"}, decision="approved")
 
-    records = read_lines(tmp_path)
+    records = read_audit(tmp_path)
     assert len(records) == 1
     assert records[0]["decision"] == "approved"
     assert records[0]["actor"] == "human"
@@ -34,7 +31,7 @@ def test_sensitive_keys_are_masked_never_logged(tmp_path):
         decision="executed",
     )
 
-    record = read_lines(tmp_path)[0]
+    record = read_audit(tmp_path)[0]
     stored = json.loads(record["args"])
     assert stored["api_key"] == "***"
     assert stored["access_token"] == "***"
@@ -44,15 +41,15 @@ def test_sensitive_keys_are_masked_never_logged(tmp_path):
     assert "tok-123" not in raw
 
 
-def test_args_over_cap_are_truncated(tmp_path):
+def test_long_values_are_capped_and_args_stay_valid_json(tmp_path):
     log = AuditLog(tmp_path)
     long_text = "x" * 2000
 
     log.append(run_id="r1", actor="loom", tool="echo", args={"text": long_text}, decision="executed")
 
-    record = read_lines(tmp_path)[0]
-    assert len(record["args"]) <= 500
-    assert record["args"].startswith('{"text": "xxx')
+    record = read_audit(tmp_path)[0]
+    stored = json.loads(record["args"])
+    assert stored["text"] == "x" * 200
 
 
 def test_records_carry_all_six_fields(tmp_path):
@@ -60,7 +57,7 @@ def test_records_carry_all_six_fields(tmp_path):
 
     log.append(run_id="r1", actor="human", tool="t", args={}, decision="rejected")
 
-    record = read_lines(tmp_path)[0]
+    record = read_audit(tmp_path)[0]
     assert set(record) == {"ts", "run_id", "actor", "tool", "args", "decision"}
 
 

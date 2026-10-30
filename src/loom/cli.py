@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
 import loom
@@ -72,7 +73,7 @@ def _doctor() -> int:
     if api_key:
         print(f"{_OK}LLM_API_KEY present")
     else:
-        print(f"{_WARN}LLM_API_KEY not set (optional in Phase 0)")
+        print(f"{_WARN}LLM_API_KEY not set (loom chat needs it)")
 
     return 1 if failed else 0
 
@@ -109,14 +110,17 @@ def _chat(thread_id: str | None, read: Callable[[str], str] = input, emit: Calla
     settings = get_settings()
     setup_logging(settings)
     model = make_model(settings)
-    graph = build_graph(model, settings)
-    session_id = thread_id or uuid.uuid4().hex
-    emit(f"thread {session_id}")
-    emit("type a message; side-effect tools pause for approve/reject; 'quit' exits")
-    try:
-        chat_session(graph, session_id, read, emit)
-    except (EOFError, KeyboardInterrupt):
-        pass
+    ckpt_dir = Path(settings.loom_data_dir) / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    with SqliteSaver.from_conn_string(ckpt_dir / "threads.sqlite") as checkpointer:
+        graph = build_graph(model, settings, checkpointer)
+        session_id = thread_id or uuid.uuid4().hex
+        emit(f"thread {session_id}")
+        emit("type a message; side-effect tools pause for approve/reject; 'quit' exits")
+        try:
+            chat_session(graph, session_id, read, emit)
+        except (EOFError, KeyboardInterrupt):
+            pass
     emit("goodbye")
     return 0
 

@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import sys
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,9 +14,10 @@ from loom.config import Settings
 _run_id: ContextVar[str] = ContextVar("loom_run_id", default="-")
 
 
-def set_run_id(run_id: str) -> "Token[str]":
-    """Set the run id attached to log records; returns the reset token."""
-    return _run_id.set(run_id)
+def set_run_id(run_id: str) -> None:
+    """Set the run id attached to log records."""
+    _run_id.set(run_id)
+
 
 _STANDARD_ATTRS = frozenset({
     "args", "asctime", "created", "exc_info", "exc_text", "filename", "funcName",

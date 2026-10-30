@@ -1,16 +1,9 @@
-import json
-
-from conftest import ScriptedChatModel, tool_call_msg
+from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
 from loom.config import Settings
 from loom.graph import build_graph
-
-
-def read_audit(data_dir):
-    path = next((data_dir / "audit").glob("*.jsonl"))
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def make_graph(tmp_path, scripted):
@@ -74,3 +67,23 @@ def test_side_effect_tool_reject_executes_nothing(tmp_path):
     assert "rejected" in final.content
     decisions = [r["decision"] for r in read_audit(data_dir)]
     assert decisions == ["rejected"]
+
+
+def test_new_graph_over_the_same_sqlite_resumes_the_thread(tmp_path):
+    """A fresh graph process reading the same checkpoint file sees the thread history."""
+    settings = Settings(loom_env="dev", loom_data_dir=tmp_path)
+
+    first = build_graph(ScriptedChatModel(messages=iter([AIMessage(content="first answer")])), settings)
+    first.invoke(
+        {"messages": [{"role": "user", "content": "hello"}], "run_id": "r1"},
+        {"configurable": {"thread_id": "t9"}},
+    )
+
+    second = build_graph(ScriptedChatModel(messages=iter([AIMessage(content="second answer")])), settings)
+    result = second.invoke(
+        {"messages": [{"role": "user", "content": "again"}], "run_id": "r2"},
+        {"configurable": {"thread_id": "t9"}},
+    )
+
+    assert result["messages"][-1].content == "second answer"
+    assert result["messages"][0].content == "hello"

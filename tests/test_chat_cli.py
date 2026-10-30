@@ -1,6 +1,4 @@
-import json
-
-from conftest import ScriptedChatModel, tool_call_msg
+from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 
 import loom.cli
@@ -31,8 +29,7 @@ def _settings(tmp_path):
 
 
 def audit_decisions(data_dir):
-    path = next((data_dir / "audit").glob("*.jsonl"))
-    return [json.loads(line)["decision"] for line in path.read_text(encoding="utf-8").splitlines()]
+    return [record["decision"] for record in read_audit(data_dir)]
 
 
 def test_approve_turn_executes_the_proposed_tool(tmp_path):
