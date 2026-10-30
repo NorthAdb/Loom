@@ -8,10 +8,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
 
-from loom import tools
 from loom.audit import AuditLog, summarize_args
 from loom.checkpoints import make_checkpointer
 from loom.config import Settings
+from loom.tools import make_tools
 
 
 class GraphState(TypedDict):
@@ -23,10 +23,11 @@ class GraphState(TypedDict):
 
 
 def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None):
-    """Compile the agent/gate/tools/aborted graph; checkpointer enables thread resume."""
-    tools.configure(settings.loom_data_dir)
+    """Compile the agent/gate/tools/aborted graph. Long-lived callers pass the
+    checkpointer so the connection lifecycle stays with them."""
+    registry = make_tools(settings.loom_data_dir)
     audit = AuditLog(settings.loom_data_dir)
-    bound = model.bind_tools(tools.registry_funcs())
+    bound = model.bind_tools([spec.func for spec in registry.values()])
 
     def agent(state: GraphState) -> dict:
         return {"messages": [bound.invoke(state["messages"])]}
@@ -39,12 +40,12 @@ def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None):
         calls = _last_tool_calls(state)
         if not calls:
             return END
-        if any(spec.side_effect for call in calls if (spec := tools.REGISTRY.get(call["name"]))):
+        if any(spec.side_effect for call in calls if (spec := registry.get(call["name"]))):
             return "gate"
         return "tools"
 
     def gate(state: GraphState) -> dict:
-        calls = [c for c in _last_tool_calls(state) if (spec := tools.REGISTRY.get(c["name"])) and spec.side_effect]
+        calls = [c for c in _last_tool_calls(state) if (spec := registry.get(c["name"])) and spec.side_effect]
         payload = {
             "tools": [{"name": c["name"], "args": summarize_args(c["args"])} for c in calls],
             "reason": "These tools change state and need human approval.",
@@ -67,7 +68,7 @@ def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None):
     def run_tools(state: GraphState) -> dict:
         messages: list[ToolMessage] = []
         for call in _last_tool_calls(state):
-            spec = tools.REGISTRY.get(call["name"])
+            spec = registry.get(call["name"])
             if spec is None:
                 messages.append(ToolMessage(content=f"error: unknown tool {call['name']}", tool_call_id=call["id"]))
                 continue
@@ -80,7 +81,7 @@ def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None):
                     audit.append(
                         run_id=state.get("run_id", ""),
                         actor="loom",
-                        tool=spec.name,
+                        tool=call["name"],
                         args=call["args"],
                         decision="failed",
                     )
@@ -89,7 +90,7 @@ def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None):
                 audit.append(
                     run_id=state.get("run_id", ""),
                     actor="loom",
-                    tool=spec.name,
+                    tool=call["name"],
                     args=call["args"],
                     decision="executed",
                 )

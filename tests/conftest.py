@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
@@ -15,6 +17,12 @@ class ScriptedChatModel(GenericFakeChatModel):
 def tool_call_msg(name: str, args: dict, call_id: str = "call_1") -> AIMessage:
     """Build an AIMessage carrying one tool call, as a model would emit."""
     return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": call_id, "type": "tool_call"}])
+
+
+def read_audit(data_dir) -> list[dict]:
+    """Parse the audit JSONL a test just wrote."""
+    path = next((data_dir / "audit").glob("*.jsonl"))
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 @pytest.fixture(autouse=True)

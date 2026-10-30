@@ -7,7 +7,7 @@ from typing import Any
 
 from loom.logging import is_sensitive
 
-_ARGS_CAP = 500
+_VALUE_CAP = 200
 
 
 def redact_args(args: dict[str, Any]) -> dict[str, Any]:
@@ -16,8 +16,10 @@ def redact_args(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def summarize_args(args: dict[str, Any]) -> str:
-    """Serialize args for records and interrupt payloads: redacted, then capped."""
-    return json.dumps(redact_args(args), ensure_ascii=False)[:_ARGS_CAP]
+    """Serialize args for records and interrupt payloads: redacted, long values capped."""
+    redacted = redact_args(args)
+    capped = {name: (value[:_VALUE_CAP] if isinstance(value, str) else value) for name, value in redacted.items()}
+    return json.dumps(capped, ensure_ascii=False)
 
 
 class AuditLog:
