@@ -1,13 +1,24 @@
-"""Command line entry points: loom version, loom doctor."""
+"""Command line entry points: loom version, loom doctor, loom chat."""
 
 import argparse
+import logging
 import os
 import sys
-from collections.abc import Sequence
+import uuid
+from collections.abc import Callable, Sequence
 from pathlib import Path
+
+from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import Command
 
 import loom
 from loom.config import ConfigError, Settings, get_settings
+from loom.graph import build_graph
+from loom.llm import make_model
+from loom.logging import set_run_id, setup_logging
+
+logger = logging.getLogger("loom")
 
 _MIN_PYTHON = (3, 11)
 
@@ -62,9 +73,56 @@ def _doctor() -> int:
     if api_key:
         print(f"{_OK}LLM_API_KEY present")
     else:
-        print(f"{_WARN}LLM_API_KEY not set (optional in Phase 0)")
+        print(f"{_WARN}LLM_API_KEY not set (loom chat needs it)")
 
     return 1 if failed else 0
+
+
+def chat_session(graph, thread_id: str, read: Callable[[str], str], emit: Callable[[str], None]) -> None:
+    """Drive one REPL over a compiled graph: turn, gate approval loop, answer."""
+    config = {"configurable": {"thread_id": thread_id}}
+    while True:
+        text = read("you> ").strip()
+        if not text:
+            continue
+        if text.lower() in ("quit", "exit"):
+            return
+
+        run_id = uuid.uuid4().hex
+        set_run_id(run_id)
+        logger.info("chat turn", extra={"thread_id": thread_id})
+        result = graph.invoke({"messages": [HumanMessage(content=text)], "run_id": run_id}, config)
+        while "__interrupt__" in result:
+            payload = result["__interrupt__"][0].value
+            for item in payload["tools"]:
+                emit(f"approval needed: {item['name']} args={item['args']}")
+            emit(payload["reason"])
+            while True:
+                answer = read("approve or reject? ").strip().lower()
+                if answer in ("approve", "reject"):
+                    break
+                emit("please answer approve or reject")
+            result = graph.invoke(Command(resume={"decision": answer}), config)
+        emit(result["messages"][-1].content)
+
+
+def _chat(thread_id: str | None, read: Callable[[str], str] = input, emit: Callable[[str], None] = print) -> int:
+    settings = get_settings()
+    setup_logging(settings)
+    model = make_model(settings)
+    ckpt_dir = Path(settings.loom_data_dir) / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    with SqliteSaver.from_conn_string(ckpt_dir / "threads.sqlite") as checkpointer:
+        graph = build_graph(model, settings, checkpointer)
+        session_id = thread_id or uuid.uuid4().hex
+        emit(f"thread {session_id}")
+        emit("type a message; side-effect tools pause for approve/reject; 'quit' exits")
+        try:
+            chat_session(graph, session_id, read, emit)
+        except (EOFError, KeyboardInterrupt):
+            pass
+    emit("goodbye")
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -72,9 +130,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("version", help="Print the package version.")
     subparsers.add_parser("doctor", help="Check the local environment.")
+    chat_parser = subparsers.add_parser("chat", help="Chat with the agent.")
+    chat_parser.add_argument("--thread-id", help="Resume an existing thread from its checkpoint.")
     args = parser.parse_args(argv)
 
     if args.command == "version":
         print(loom.__version__)
         return 0
+    if args.command == "chat":
+        try:
+            return _chat(args.thread_id)
+        except ConfigError as exc:
+            print(f"config error: {exc}")
+            return 1
     return _doctor()
