@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     )
     loom_data_dir: Path = Field(default=Path("./data"), validation_alias="LOOM_DATA_DIR")
     llm_api_key: str = Field(default="", validation_alias="LLM_API_KEY")
+    llm_model: str = Field(default="gpt-4o-mini", validation_alias="LLM_MODEL")
+    llm_base_url: str = Field(default="", validation_alias="LLM_BASE_URL")
 
 
 def _describe_errors(exc: ValidationError) -> str:
