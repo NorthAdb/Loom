@@ -1,6 +1,10 @@
 # Architecture
 
-Target shape for Loom. None of these layers are implemented. What exists today is the documentation set and a Python package skeleton. Checklist: [STATUS.md](STATUS.md).
+Target shape for Loom. The core loop is implemented; the remaining layers exist only as design. Checklist: [STATUS.md](STATUS.md).
+
+## Implemented loop
+
+The core loop lives in `src/loom`. `loom chat` reads a line and invokes a LangGraph graph whose state is checkpointed by thread id in a `SqliteSaver`. The `agent` node binds the tool registry: with no tool calls it answers, with harmless-only calls it routes to `tools`, and with any tool flagged `side_effect` it routes to `gate`. The `gate` node calls `interrupt()` with the proposed tool names and redacted arguments, which pauses the graph until the CLI resumes it with approve or reject. Approve routes to `tools`, which executes the calls and appends audit records; reject routes to `aborted`, which answers with a rejection and executes nothing. Decisions and executions append JSON lines to `<data dir>/audit/YYYYMMDD.jsonl`; checkpoints live under `<data dir>/checkpoints/threads.sqlite`.
 
 ## Layers
 
@@ -46,9 +50,10 @@ person / scheduler
 ## What the code layout is today
 
 ```text
-src/loom/          Python package skeleton (__version__ only)
+src/loom/          Config, logging, tool registry, audit log, LangGraph loop, CLI
+scripts/           Gate demo (scripts/demo_gate1.py)
 docs/              Product and engineering record
-pyproject.toml     Package metadata, no runtime dependencies
+pyproject.toml     Package metadata and runtime dependencies
 ```
 
 Add a layer’s code only when [ROADMAP.md](ROADMAP.md) and [STATUS.md](STATUS.md) move that item forward. Do not add unused frameworks ahead of that.

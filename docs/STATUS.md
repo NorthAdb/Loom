@@ -2,13 +2,16 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-10-30 (Phase 0 engineering foundation).
+Last updated: 2026-10-30 (Phase 1 core loop).
 
 ## Done
 
 - [x] Repository bootstrap: README, vision, architecture, decisions, roadmap, status, security, contributing, MIT license, Python package skeleton (`loom` version marker only)
 - [x] Phase 0 engineering foundation: installable package (`pip install -e ".[dev]"`), pydantic-settings config with `.env` support and errors that name the variable, structured JSON logging with secret redaction, `loom version` and `loom doctor` CLI, pytest suite
 - [x] Real “how to run” instructions in README
+- [x] LangGraph orchestration
+- [x] Approval gate for side effects
+- [x] Phase 1 core loop: `loom chat` REPL, tool registry with side-effect flags, interrupt-based approval gate, append-only JSONL audit, sqlite checkpoints, mock-model-tested
 
 ## In progress
 
@@ -20,10 +23,8 @@ Last updated: 2026-10-30 (Phase 0 engineering foundation).
 
 - [ ] Local file sandbox
 - [ ] Scheduled routines
-- [ ] Approval gate for side effects
 - [ ] Memory baseline: Mem0
 - [ ] Memory baseline: self-owned facts and preferences table
-- [ ] LangGraph orchestration
 - [ ] Local single-host Docker runtime
 
 ### P1 — Calendar and email drafts
