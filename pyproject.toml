@@ -18,6 +18,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
 ]
+dependencies = ["pydantic-settings>=2.0"]
 dynamic = ["version"]
 
 [project.urls]
@@ -25,8 +26,17 @@ Homepage = "https://github.com/NorthAdb/Loom"
 Repository = "https://github.com/NorthAdb/Loom"
 Documentation = "https://github.com/NorthAdb/Loom/blob/main/docs/STATUS.md"
 
+[project.scripts]
+loom = "loom.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
 [tool.hatch.version]
 path = "src/loom/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/loom"]
+
+[tool.ruff]
+line-length = 120
