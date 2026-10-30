@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import sys
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -12,6 +12,11 @@ from typing import Any
 from loom.config import Settings
 
 _run_id: ContextVar[str] = ContextVar("loom_run_id", default="-")
+
+
+def set_run_id(run_id: str) -> "Token[str]":
+    """Set the run id attached to log records; returns the reset token."""
+    return _run_id.set(run_id)
 
 _STANDARD_ATTRS = frozenset({
     "args", "asctime", "created", "exc_info", "exc_text", "filename", "funcName",
@@ -21,6 +26,11 @@ _STANDARD_ATTRS = frozenset({
 })
 
 _SENSITIVE = re.compile(r"key|token|secret|password|authorization", re.IGNORECASE)
+
+
+def is_sensitive(name: str) -> bool:
+    """Report whether a field name looks secret-bearing."""
+    return bool(_SENSITIVE.search(name))
 
 
 class RunContextFilter(logging.Filter):
@@ -38,7 +48,7 @@ class RedactionFilter(logging.Filter):
         for name in list(vars(record)):
             if name in _STANDARD_ATTRS:
                 continue
-            if _SENSITIVE.search(name):
+            if is_sensitive(name):
                 setattr(record, name, "***")
         return True
 
