@@ -1,6 +1,6 @@
 # Security
 
-Constraints for every later change. The approval gate, the file sandbox boundary, and the memory secret guards below are implemented; the rest is rules the remaining items have to satisfy. [STATUS.md](STATUS.md) is the checklist.
+Constraints for every later change. The approval gate, the file sandbox boundary, the memory secret guards, and the email draft and read-only calendar paths below are implemented; the rest is rules the remaining items have to satisfy. [STATUS.md](STATUS.md) is the checklist.
 
 ## Secrets
 
@@ -23,11 +23,11 @@ Memory has two entry paths and both refuse secrets; nothing that looks like a ke
 
 Email is draft-only. Loom does not send mail.
 
-The furthest an email tool may go is creating or updating a draft. There is no send tool, and a routine must not add one. A draft is still a side effect: it waits for the approval gate once that gate exists.
+Implemented (Phase 5): `mail_create_draft` and `mail_update_draft` are the only mail tools. They APPEND a draft with the `\Draft` flag to the configured IMAP folder (`LOOM_MAIL_FOLDER`, default Drafts) or replace one by Message-ID search, and nothing else in the module touches the server. Both are `side_effect=true`, so a draft waits for the approval gate; the approval payload shows the full recipient, subject, and body, and a rejected draft never reaches the IMAP server. There is no send tool, and a routine must not add one: `tests/test_gate3_guards.py` greps `src/loom` for send symbols and allows only the draft and read IMAP verbs (append, store, search, expunge, select, login, logout).
 
 ## Calendar
 
-Calendar access is a read-only summary. Tools do not create, update, or delete events. A write API is out of scope until a new ADR says otherwise. No such ADR exists.
+Calendar access is a read-only summary. Implemented (Phase 5): `calendar_list_events` and `calendar_summarize_range` (both `side_effect=false`) GET an ICS feed and render events in the configured timezone. Neither the transports nor `parse_events` can create, update, or delete an event, and the same gate test fails if a write symbol appears in `src/loom`. A write API is out of scope until a new ADR says otherwise. No such ADR exists.
 
 ## Side effects and the approval gate
 
