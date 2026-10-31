@@ -148,3 +148,33 @@ def test_explicit_memory_intent_patterns():
 
     for text in ("今天天气如何", "hello there", "what time is it?"):
         assert not has_explicit_memory_intent(text), text
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a7Kx9mQ2pL5vB8nR",  # 16 distinct characters: 4 bits/char, like a random token
+        "Zm9vYmFyQmF6cXV4",  # base64-shaped run the provider prefixes never catch
+        "password hunter2",  # label + value shape, refused at any length
+        "passwd: hunter2",
+        "pwd=hunter2",
+    ],
+)
+def test_facts_value_guard_refuses_secret_shapes(tmp_path, value):
+    with pytest.raises(ValueError, match="looks like it carries a secret"):
+        FactsStore(tmp_path).upsert("note", value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "中文",
+        "prefers short replies with headers",
+        "reply_language 中文",
+        "always summarize the week on Monday mornings",
+    ],
+)
+def test_facts_value_guard_passes_benign_values(tmp_path, value):
+    stored = FactsStore(tmp_path).upsert("note", value)
+
+    assert stored.value == value

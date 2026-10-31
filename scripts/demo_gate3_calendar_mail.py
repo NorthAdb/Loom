@@ -27,8 +27,11 @@ from loom.graph import build_graph
 
 TZ = ZoneInfo("Asia/Hong_Kong")
 
-_FORBIDDEN = ("send_email", "sendmail", "smtplib", "events.insert", "SMTP")
-_IMAP_VERBS = {"append", "store", "search", "expunge", "select", "login", "logout"}
+_FORBIDDEN = (
+    "send_email", "sendmail", "smtplib", "send_message", "SMTP",
+    "events.insert", "events.patch", "events.update", "events.delete",
+)
+_IMAP_VERBS = {"uid", "append", "select", "login", "logout"}
 
 
 class ScriptedChatModel(GenericFakeChatModel):

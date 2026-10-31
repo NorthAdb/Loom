@@ -9,10 +9,12 @@ labeled authoritative; Mem0 results after, labeled reference; on conflict the
 table wins.
 """
 
+import math
 import os
 import re
 import sqlite3
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -36,6 +38,33 @@ _EXPLICIT_PATTERNS = (
 _SECRET_PREFIXES = ("sk-", "pk_", "ghp_", "akia", "xox")
 _LONG_TOKEN = re.compile(r"[A-Za-z0-9_-]{24,}")
 _SECRET_WORD = re.compile(r"key|token|secret|password", re.IGNORECASE)
+
+# FactsStore value guard: a pasted API key often has no provider prefix, so a
+# high-entropy run or a literal "password xxx" shape is refused too.
+_HIGH_ENTROPY_MIN_RUN = 16
+_HIGH_ENTROPY_BITS = 3.25
+_PASSWORD_SHAPE = re.compile(r"\b(?:password|passwd|pwd)\b\s*[:=]?\s*\S", re.IGNORECASE)
+
+
+def _shannon_entropy(text: str) -> float:
+    """Bits of information per character of this exact string."""
+    if not text:
+        return 0.0
+    length = len(text)
+    return -sum((count / length) * math.log2(count / length) for count in Counter(text).values())
+
+
+def looks_like_secret_value(value: str) -> bool:
+    """Report whether a facts value carries a secret beyond the chat guard's shapes.
+
+    Refuses any whitespace-delimited run of >= 16 characters whose Shannon
+    entropy is >= 3.25 bits/char (random tokens are; prose is not), and any
+    "password xxx" / "passwd: xxx" / "pwd=xxx" shape at any length.
+    """
+    for run in value.split():
+        if len(run) >= _HIGH_ENTROPY_MIN_RUN and _shannon_entropy(run) >= _HIGH_ENTROPY_BITS:
+            return True
+    return bool(_PASSWORD_SHAPE.search(value))
 
 
 def has_explicit_memory_intent(text: str) -> bool:
@@ -92,6 +121,8 @@ class FactsStore:
             raise ValueError(f"refusing to store fact: key {key!r} looks like it carries a secret")
         if contains_secret(f"{key} {value}"):
             raise ValueError(f"refusing to store fact: value for {key!r} looks like an API key or token")
+        if looks_like_secret_value(value):
+            raise ValueError(f"refusing to store fact: value for {key!r} looks like it carries a secret")
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO facts (id, key, value, source, updated_at, confidence) "
