@@ -98,17 +98,24 @@ def _duration(event, start: datetime, all_day: bool, tz: ZoneInfo) -> timedelta:
         return timedelta(days=1) if all_day else timedelta(0)
 
 
-def _excluded_timestamps(event) -> set[float]:
-    """EXDATE values as UTC timestamps, so occurrences compare regardless of zone."""
+def _excluded(event, fallback_tz) -> tuple[set[float], set]:
+    """EXDATE values as (UTC timestamps, local dates) so occurrences compare either way.
+
+    Date-only EXDATEs (the usual form on recurring events) exclude by calendar day
+    in the event's own zone.
+    """
     try:
         exdates = event.exdates or []
     except Exception:  # noqa: BLE001 - a broken EXDATE must not kill the feed
-        return set()
-    excluded = set()
+        return set(), set()
+    stamps: set[float] = set()
+    days: set = set()
     for value in exdates:
         if isinstance(value, datetime) and value.tzinfo is not None:
-            excluded.add(value.astimezone(UTC).timestamp())
-    return excluded
+            stamps.add(value.astimezone(UTC).timestamp())
+        elif isinstance(value, date):
+            days.add(value)
+    return stamps, days
 
 
 def _occurrence_starts(event, start: datetime, window_start: datetime, window_end: datetime) -> list[datetime]:
@@ -124,12 +131,12 @@ def _occurrence_starts(event, start: datetime, window_start: datetime, window_en
     except (TypeError, ValueError) as exc:
         logger.warning("calendar: unsupported RRULE; keeping the first occurrence only", extra={"error": str(exc)})
         return [start]
-    excluded = _excluded_timestamps(event)
+    excluded, excluded_days = _excluded(event, window_start.tzinfo)
     starts: list[datetime] = []
     for scanned, occ in enumerate(rule, start=1):
         if occ > window_end or scanned > _ENUMERATION_CAP:
             break
-        if occ >= window_start and occ.astimezone(UTC).timestamp() not in excluded:
+        if occ >= window_start and occ.astimezone(UTC).timestamp() not in excluded and occ.date() not in excluded_days:
             starts.append(occ)
             if len(starts) >= _WINDOW_OCCURRENCE_CAP:
                 logger.warning("calendar: RRULE hit the window occurrence cap", extra={"cap": _WINDOW_OCCURRENCE_CAP})

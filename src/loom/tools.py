@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from langchain_core.tools import BaseTool, tool
 
-from loom.calendar import CalendarTransport, HttpCalendarTransport, parse_events, summarize
+from loom.calendar import HttpCalendarTransport, parse_events, summarize
 from loom.config import Settings
 from loom.mail import MAIL_NOT_CONFIGURED, ImapMailTransport, MailTransport, build_draft_message
 from loom.sandbox import HttpSandboxTransport, LocalSandboxTransport, SandboxTransport
@@ -55,11 +55,6 @@ def _iso_boundary(text: str, tz: ZoneInfo, which: str) -> datetime:
     return value.replace(tzinfo=tz) if value.tzinfo is None else value.astimezone(tz)
 
 
-def build_calendar_transport(settings: Settings) -> CalendarTransport | None:
-    """The ICS transport for the registry, or None when LOOM_ICAL_URL is unset."""
-    return HttpCalendarTransport(settings.ical_url) if settings.ical_url else None
-
-
 def build_mail_transport(settings: Settings) -> MailTransport | None:
     """The IMAP transport for the registry, or None when LOOM_IMAP_HOST is unset."""
     return ImapMailTransport(settings) if settings.imap_host else None
@@ -78,7 +73,9 @@ def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, 
         transport: SandboxTransport = HttpSandboxTransport(settings.loom_sandbox_url)
     else:
         transport = LocalSandboxTransport(settings.loom_sandbox_root)
-    calendar_transport = chosen.get("calendar") or build_calendar_transport(settings)
+    calendar_transport = chosen.get("calendar") or (
+        HttpCalendarTransport(settings.ical_url) if settings.ical_url else None
+    )
     mail_transport = chosen.get("mail") or build_mail_transport(settings)
 
     @tool

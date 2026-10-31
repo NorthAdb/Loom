@@ -164,3 +164,18 @@ def test_doctor_imap_line_reports_a_listening_host(monkeypatch, capsys, tmp_path
 
     assert code == 0
     assert f"ok     imap 127.0.0.1:{port}" in out
+
+
+def test_doctor_tolerates_a_non_integer_imap_port_without_crashing(capsys):
+    """A broken LOOM_IMAP_PORT must surface as a FAIL line, not a traceback."""
+    import os
+
+    os.environ["LOOM_IMAP_HOST"] = "imap.example.com"
+    os.environ["LOOM_IMAP_PORT"] = "not-a-number"
+
+    code = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert code != 0
+    assert "imap" in out
+    assert "FAIL" in out

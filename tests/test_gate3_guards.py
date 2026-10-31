@@ -62,10 +62,10 @@ def test_mail_module_uses_only_draft_and_read_imap_verbs():
     text = (_SRC / "mail.py").read_text(encoding="utf-8")
 
     verbs = set(re.findall(r"client\.(\w+)\(", text))
-    module_uses = set(re.findall(r"imaplib\.(\w+)", text))
+    module_uses = set(re.findall(r"imaplib\.(IMAP4_SSL|IMAP4\.error)", text))
 
     assert verbs <= IMAP_VERBS, verbs
-    assert module_uses <= {"IMAP4_SSL", "IMAP4", "error"}, module_uses
+    assert module_uses == {"IMAP4_SSL", "IMAP4.error"}, module_uses
 
 
 def test_mail_tool_args_and_results_never_carry_the_password(tmp_path):

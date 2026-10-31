@@ -30,8 +30,8 @@ MEMORY_REFUSAL = (
     "so nothing was saved to memory."
 )
 
-# The interrupt payload must show a full draft text (recipient, subject, body);
-# audit records stay capped at summarize_args' default.
+# The interrupt payload cap is larger than the audit cap so a draft's full text
+# is visible at approval; see summarize_args.
 _GATE_PAYLOAD_CAP = 2000
 
 

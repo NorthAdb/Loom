@@ -136,7 +136,10 @@ def _doctor() -> int:
 
     imap_host = settings.imap_host if settings else os.environ.get("LOOM_IMAP_HOST", "")
     if imap_host:
-        imap_port = settings.imap_port if settings else int(os.environ.get("LOOM_IMAP_PORT") or "993")
+        try:
+            imap_port = settings.imap_port if settings else int(os.environ.get("LOOM_IMAP_PORT") or "993")
+        except ValueError:
+            imap_port = -1
         if _imap_reachable(imap_host, imap_port):
             print(f"{_OK}imap {imap_host}:{imap_port}")
         else:

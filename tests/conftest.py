@@ -46,10 +46,8 @@ class FakeCalendarTransport:
 
     def __init__(self, ics: bytes):
         self.ics = ics
-        self.fetches = 0
 
     def fetch_ics(self) -> bytes:
-        self.fetches += 1
         return self.ics
 
 

@@ -47,6 +47,14 @@ def _message_id(message_bytes: bytes) -> str:
     return str(parsed["Message-ID"] or "")
 
 
+def _validate_draft_id(old_id: str) -> None:
+    """A draft id is a Message-ID like <...@...>; anything else never reaches IMAP."""
+    if not (old_id.startswith("<") and old_id.endswith(">") and len(old_id) > 2):
+        raise ValueError(f"draft id is not a Message-ID: {old_id!r}")
+    if any(ch in old_id for ch in ('"', "\r", "\n")):
+        raise ValueError(f"draft id contains forbidden characters: {old_id!r}")
+
+
 def _scrub(exc: Exception, password: str) -> str:
     """Server error text with the password removed, should it ever echo back."""
     text = f"{type(exc).__name__}: {exc}"
@@ -71,18 +79,25 @@ class ImapMailTransport:
             client.logout()
 
     def replace_draft(self, old_id: str, message_bytes: bytes) -> str:
+        _validate_draft_id(old_id)
         client = self._connect()
         try:
             status, _ = client.select(self._mailbox())
             self._check(status, "open the drafts folder")
             status, data = client.search(None, "HEADER", "Message-ID", f'"{old_id}"')
             self._check(status, "search the old draft")
-            for num in (data[0] or b"").split():
-                client.store(num, "+FLAGS.SILENT", r"(\Deleted)")
-            client.expunge()
+            matches = (data[0] or b"").split()
+            if not matches:
+                raise ValueError(f"no existing draft matches Message-ID {old_id}")
+            # The replacement lands before the old draft is expunged: a failure
+            # then leaves a recoverable duplicate, never a lost draft.
             status, _ = client.append(self._mailbox(), r"(\Draft)", None, message_bytes)
             self._check(status, "append the replacement draft")
-            return _message_id(message_bytes)
+            new_id = _message_id(message_bytes)
+            for num in matches:
+                client.store(num, "+FLAGS.SILENT", r"(\Deleted)")
+            client.expunge()
+            return new_id
         finally:
             client.logout()
 
@@ -101,6 +116,7 @@ class ImapMailTransport:
         try:
             client.login(s.mail_user, s.mail_password)
         except imaplib.IMAP4.error as exc:
+            client.logout()
             raise RuntimeError(
                 f"IMAP login failed ({_scrub(exc, s.mail_password)}); check LOOM_MAIL_USER and LOOM_MAIL_PASSWORD"
             ) from exc

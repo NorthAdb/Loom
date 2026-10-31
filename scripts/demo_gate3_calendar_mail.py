@@ -187,7 +187,7 @@ def scenario_draft_reject_never_touches_the_transport(data_dir: Path, base_url: 
     return "PASS"
 
 
-def scenario_no_send_symbols_in_source(data_dir: Path, base_url: str) -> str:
+def scenario_no_send_symbols_in_source() -> str:
     src = Path(__file__).resolve().parents[1] / "src" / "loom"
     text = "\n".join(path.read_text(encoding="utf-8") for path in sorted(src.glob("*.py")))
     hits = [symbol for symbol in _FORBIDDEN if symbol in text]
@@ -219,7 +219,7 @@ def main() -> int:
         ("b", "calendar_list_events runs through the graph without the gate", scenario_calendar_tool_through_the_graph),
         ("c", "mail draft approve: the prompt shows the full text, then the transport appends once", scenario_draft_approve_shows_full_text_then_appends),
         ("d", "mail draft reject: the transport is never called", scenario_draft_reject_never_touches_the_transport),
-        ("e", "gate guard: no send or calendar-write symbols anywhere in src/loom", scenario_no_send_symbols_in_source),
+        ("e", "gate guard: no send or calendar-write symbols anywhere in src/loom", lambda a, b: scenario_no_send_symbols_in_source()),
     )
     results = []
     try:

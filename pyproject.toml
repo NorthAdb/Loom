@@ -19,6 +19,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+  "python-dateutil>=2.9",
   "pydantic-settings>=2.0",
   "langgraph>=1.2,<2",
   "langchain-core>=1.7,<2",

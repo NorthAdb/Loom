@@ -6,7 +6,7 @@ import pytest
 from conftest import FakeMailTransport
 
 from loom.config import Settings
-from loom.mail import ImapMailTransport, build_draft_message
+from loom.mail import ImapMailTransport, _message_id, build_draft_message
 from loom.tools import make_tools
 
 
@@ -99,3 +99,81 @@ def test_imap_transport_connection_failure_names_the_host_var_without_the_passwo
         transport.append_draft(build_draft_message("a@b.com", "s", "b", "owner@example.com"))
 
     assert "secret-pass-42" not in str(exc_info.value)
+
+
+class FakeIMAPClient:
+    """Records call order so replace_draft's safety ordering is observable."""
+
+    def __init__(self, matches=b"1"):
+        self.calls = []
+        self.matches = matches
+
+    def append(self, mailbox, flags, date, message_bytes):
+        self.calls.append(("append", mailbox, flags))
+        return "OK", [b""]
+
+    def select(self, mailbox):
+        self.calls.append(("select", mailbox))
+        return "OK", [b"1"]
+
+    def search(self, charset, *criteria):
+        self.calls.append(("search", *criteria))
+        return "OK", [self.matches]
+
+    def store(self, num, flags, value):
+        self.calls.append(("store", num, value))
+        return "OK", [b""]
+
+    def expunge(self):
+        self.calls.append(("expunge",))
+        return "OK", [b""]
+
+    def login(self, user, password):
+        self.calls.append(("login", user))
+        return "OK", [b"logged in"]
+
+    def logout(self):
+        self.calls.append(("logout",))
+        return "OK", [b"Bye"]
+
+
+def _patched_imap(monkeypatch, client):
+    monkeypatch.setattr("loom.mail.imaplib.IMAP4_SSL", lambda host, port: client)
+
+
+def test_replace_draft_appends_before_expunging(monkeypatch, tmp_path):
+    client = FakeIMAPClient(matches=b"7")
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    new_id = transport.replace_draft("<old@loom>", message)
+
+    order = [call[0] for call in client.calls]
+    assert order.index("append") < order.index("expunge")
+    assert ("store", b"7", r"(\Deleted)") in client.calls
+    assert new_id == _message_id(message)
+
+
+def test_replace_draft_with_zero_matches_raises_and_never_writes(monkeypatch, tmp_path):
+    client = FakeIMAPClient(matches=b"")
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    with pytest.raises(ValueError, match="no existing draft"):
+        transport.replace_draft("<missing@loom>", message)
+
+    assert not any(call[0] in ("append", "expunge") for call in client.calls)
+
+
+def test_replace_draft_rejects_a_non_message_id_before_touching_imap(monkeypatch, tmp_path):
+    client = FakeIMAPClient()
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    with pytest.raises(ValueError, match="not a Message-ID"):
+        transport.replace_draft('x" OR SUBJECT "y', message)
+
+    assert client.calls == []

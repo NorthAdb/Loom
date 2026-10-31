@@ -1,7 +1,7 @@
 """Calendar module: parsing, expansion, rendering, and the HTTP transport."""
 
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from zoneinfo import ZoneInfo
 
@@ -208,3 +208,31 @@ def test_unconfigured_calendar_tool_raises_a_config_error(tmp_path):
 
     with pytest.raises(RuntimeError, match="LOOM_ICAL_URL"):
         registry["calendar_list_events"].func.invoke({})
+
+
+ICS_DATE_EXDATE = """BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//loom//test//EN\r
+BEGIN:VEVENT\r
+UID:exdate@loom\r
+DTSTAMP:20261031T000000Z\r
+DTSTART;TZID=Asia/Hong_Kong:20261102T100000\r
+DTEND;TZID=Asia/Hong_Kong:20261102T110000\r
+SUMMARY:Standup\r
+RRULE:FREQ=DAILY;COUNT=5\r
+EXDATE;VALUE=DATE:20261104\r
+END:VEVENT\r
+END:VCALENDAR\r
+"""
+
+
+def test_date_only_exdate_excludes_that_occurrence(tmp_path):
+    tz = ZoneInfo("Asia/Hong_Kong")
+    start = datetime(2026, 11, 2, tzinfo=tz)
+    end = datetime(2026, 11, 7, tzinfo=tz)
+
+    events = parse_events(ICS_DATE_EXDATE.encode(), start, end, tz)
+
+    summaries = [event["summary"] for event in events]
+    assert summaries.count("Standup") == 4
+    assert all(event["start"].date() != date(2026, 11, 4) for event in events)
