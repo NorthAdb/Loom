@@ -2,7 +2,7 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-10-31 (Phase 5 calendar + email drafts: read-only ICS calendar summaries, IMAP draft-only mail tools behind the approval gate, no send path, gate tests).
+Last updated: 2026-10-31 (Gate 3 materials: Phase 0-5 merged).
 
 ## Done
 
