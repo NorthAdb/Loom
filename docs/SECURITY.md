@@ -1,6 +1,6 @@
 # Security
 
-Constraints for every later change. The approval gate and the file sandbox boundary below are implemented; the rest is rules the remaining items have to satisfy. [STATUS.md](STATUS.md) is the checklist.
+Constraints for every later change. The approval gate, the file sandbox boundary, and the memory secret guards below are implemented; the rest is rules the remaining items have to satisfy. [STATUS.md](STATUS.md) is the checklist.
 
 ## Secrets
 
@@ -9,6 +9,15 @@ Secrets never enter model context. That includes API keys, tokens, passwords, an
 - Do not put secrets in prompts, system messages, tool arguments the model writes, or traces that are fed back to the model.
 - Do not commit secrets. `.env` and `.env.*` are gitignored. A placeholder `.env.example` may list variable names only, with empty values.
 - Prefer a local secret store or process environment outside the model’s inputs. When a tool needs a credential, the tool reads it. The model sees the result of the call, not the secret.
+
+## Memory
+
+Memory has two entry paths and both refuse secrets; nothing that looks like a key or token is ever stored.
+
+- `loom memory facts set` refuses a key whose name looks secret-bearing and a value that looks like an API key or token: a provider-style `sk-`/`pk_`/`ghp_`/`AKIA`/`xox` prefix, or a token-like run of 24 or more `[A-Za-z0-9_-]` characters in a message that also contains key/token/secret/password. The refusal is a `ValueError` the CLI prints.
+- The chat write-back (`post_turn`) stores a user message only when it uses explicit preference or fact language (记住, 以后, 总是, 喜欢, 偏好, 不要再, remember, always, prefer, from now on); ordinary chat writes nothing. Before storing, the same secret shape is checked, the write is refused, and the refusal is logged and appended to the conversation — the secret itself is never persisted.
+- The facts table is human-authored: rows enter through the CLI, not from model output.
+- Memory reads and writes are not side effects: they pass through no approval gate and appear nowhere in the audit log, and audit records never contain memory contents.
 
 ## Email
 

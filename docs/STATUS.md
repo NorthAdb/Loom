@@ -2,7 +2,7 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-10-31 (Gate 2 rework: chat CLI wiring fixed, main-path smoke tests added).
+Last updated: 2026-10-31 (Phase 4 memory baseline: facts table, self-hosted Mem0 adapter, graph injection, `loom memory` CLI).
 
 ## Done
 
@@ -16,17 +16,15 @@ Last updated: 2026-10-31 (Gate 2 rework: chat CLI wiring fixed, main-path smoke 
 - [x] Local file sandbox
 - [x] Local single-host Docker runtime (sandbox service; the agent loop still runs on the host)
 - [x] Phase 3 scheduled routines: routine store (`routines.json`, audited mutations, cron validated by `CronTrigger.from_crontab`), runner over the same compiled graph as chat (`thread_id` = `routine:{id}:{ts}`), unattended pending approval queue (`approvals/pending.json`) that stops before any write, `loom routines add|list|remove|run` and `loom approvals list|approve|reject` CLI, APScheduler `loom worker` (no hot reload), accelerated schedule-trigger test, demo `scripts/demo_gate2_routines.py`
+- [x] Phase 4 memory baseline: facts table (`FactsStore` over `facts.db` with upsert/get/list/delete, secret-bearing keys and values refused), self-hosted Mem0 semantic memory behind a `SemanticMemory` protocol (`NullSemanticMemory` when `LOOM_MEMORY_ENABLED=false`, telemetry off), `pre_agent` memory-note injection (facts 权威 first, Mem0 参考 after, table wins on conflict, capped by `LOOM_MEMORY_INJECT_LIMIT`), `post_turn` write-back only on explicit preference/fact language with a secret guard and logged refusal, `loom memory facts [set|del]` and `loom memory search` CLI, demo `scripts/demo_gate3_memory.py`
+- [x] Memory baseline: Mem0
+- [x] Memory baseline: self-owned facts and preferences table
 
 ## In progress
 
 - None
 
 ## Not started
-
-### P0 — Sandbox, routines, approval
-
-- [ ] Memory baseline: Mem0
-- [ ] Memory baseline: self-owned facts and preferences table
 
 ### P1 — Calendar and email drafts
 
