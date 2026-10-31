@@ -1,4 +1,4 @@
-"""Command line entry points: loom version, doctor, chat, routines, approvals, worker."""
+"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, worker."""
 
 import argparse
 import logging
@@ -20,6 +20,7 @@ from langgraph.types import Command
 import loom
 from loom.config import ConfigError, Settings, get_settings
 from loom.logging import set_run_id, setup_logging
+from loom.memory import FactsStore, build_semantic_memory
 from loom.pending import PENDING, PendingStore
 from loom.routines import Routine, RoutineStore
 from loom.runner import resume_pending, run_routine
@@ -247,6 +248,59 @@ def _approvals_decide(args: argparse.Namespace, decision: str) -> int:
     return 0
 
 
+def _fact_line(fact) -> str:
+    return f"- {fact.key}: {fact.value} ({fact.source}, {fact.updated_at})"
+
+
+def _memory_facts_list(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    facts = FactsStore(settings.loom_data_dir).list()
+    if not facts:
+        print("(no facts)")
+        return 0
+    for fact in facts:
+        print(_fact_line(fact))
+    return 0
+
+
+def _memory_facts_set(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    try:
+        stored = FactsStore(settings.loom_data_dir).upsert(args.key, " ".join(args.value))
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 1
+    print(_fact_line(stored))
+    return 0
+
+
+def _memory_facts_del(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    try:
+        removed = FactsStore(settings.loom_data_dir).delete(args.key)
+    except KeyError as exc:
+        print(f"error: {exc.args[0]}")
+        return 1
+    print(f"removed fact {removed.key}")
+    return 0
+
+
+def _memory_search(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    try:
+        semantic = build_semantic_memory(settings)
+        hits = semantic.search(" ".join(args.query), limit=settings.memory_inject_limit)
+    except (ConfigError, RuntimeError) as exc:
+        print(f"error: {exc}")
+        return 1
+    if not hits:
+        print("(no memories)")
+        return 0
+    for hit in hits:
+        print(f"- {hit}")
+    return 0
+
+
 def _worker(args: argparse.Namespace) -> int:
     settings = get_settings()
     setup_logging(settings)
@@ -308,6 +362,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         "worker",
         help="Run enabled routines on their cron schedule; new routines are not hot-reloaded.",
     )
+
+    memory_parser = subparsers.add_parser("memory", help="Inspect and manage long-term memory.")
+    memory_sub = memory_parser.add_subparsers(dest="memory_command")
+    facts_parser = memory_sub.add_parser("facts", help="List facts (the default action), set or del one.")
+    facts_sub = facts_parser.add_subparsers(dest="facts_command")
+    facts_set_parser = facts_sub.add_parser("set", help="Insert or correct one fact (same key = correction).")
+    facts_set_parser.add_argument("key", help="Short stable name, e.g. reply_language.")
+    facts_set_parser.add_argument("value", nargs="+", help="Fact value; secrets are refused.")
+    facts_del_parser = facts_sub.add_parser("del", help="Delete one fact by key.")
+    facts_del_parser.add_argument("key")
+    memory_search_parser = memory_sub.add_parser("search", help="Search the semantic memory store.")
+    memory_search_parser.add_argument("query", nargs="+")
     args = parser.parse_args(argv)
 
     if args.command == "version":
@@ -333,6 +399,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             decision = "approve" if args.approvals_command == "approve" else "reject"
             command = partial(_approvals_decide, decision=decision)
+    elif args.command == "memory":
+        if args.memory_command == "search":
+            command = _memory_search
+        else:
+            facts_actions = {"set": _memory_facts_set, "del": _memory_facts_del}
+            command = facts_actions.get(getattr(args, "facts_command", None), _memory_facts_list)
     elif args.command == "worker":
         command = _worker
     else:

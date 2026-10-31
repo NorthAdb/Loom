@@ -1,9 +1,11 @@
-"""The LangGraph loop: agent -> gate for side effects -> tools, or aborted on rejection."""
+"""The LangGraph loop: memory note -> agent -> gate for side effects -> tools, write-back, or aborted on rejection."""
 
+import logging
+import sqlite3
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
@@ -11,26 +13,72 @@ from langgraph.types import interrupt
 from loom.audit import AuditLog, summarize_args
 from loom.checkpoints import make_checkpointer
 from loom.config import Settings
+from loom.memory import (
+    FactsStore,
+    SemanticMemory,
+    build_memory_note,
+    build_semantic_memory,
+    contains_secret,
+    has_explicit_memory_intent,
+)
 from loom.tools import make_tools
+
+logger = logging.getLogger("loom")
+
+MEMORY_REFUSAL = (
+    "Write refused: that message looks like it contains an API key or token, "
+    "so nothing was saved to memory."
+)
 
 
 class GraphState(TypedDict):
     messages: Annotated[list, add_messages]
     pending_action: dict | None
     approval_status: Literal["approved", "rejected"] | None
+    memory_note: str
     run_id: str
     metadata: dict
 
 
-def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None):
-    """Compile the agent/gate/tools/aborted graph. Long-lived callers pass the
-    checkpointer so the connection lifecycle stays with them."""
+def _last_human_text(state: GraphState) -> str:
+    for message in reversed(state.get("messages", [])):
+        if isinstance(message, HumanMessage):
+            content = message.content
+            return content if isinstance(content, str) else str(content)
+    return ""
+
+
+def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None, memory: SemanticMemory | None = None):
+    """Compile the pre_agent/agent/gate/tools/post_turn/aborted graph. Long-lived callers pass the
+    checkpointer so the connection lifecycle stays with them. Tests inject a fake `memory`;
+    None builds the real one from settings (no-op when LOOM_MEMORY_ENABLED is false)."""
     registry = make_tools(settings)
     audit = AuditLog(settings.loom_data_dir)
+    facts_store = FactsStore(settings.loom_data_dir)
+    semantic: SemanticMemory = memory if memory is not None else build_semantic_memory(settings)
     bound = model.bind_tools([spec.func for spec in registry.values()])
 
+    def pre_agent(state: GraphState) -> dict:
+        try:
+            facts = facts_store.list()
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning("facts store unavailable; injecting an empty note", extra={"error": str(exc)})
+            facts = []
+        memories: list[str] = []
+        user_text = _last_human_text(state)
+        if user_text:
+            try:
+                memories = semantic.search(user_text, limit=settings.memory_inject_limit)
+            except (RuntimeError, OSError) as exc:
+                logger.warning("semantic memory unavailable; injecting facts only", extra={"error": str(exc)})
+        return {"memory_note": build_memory_note(facts, memories, limit=settings.memory_inject_limit)}
+
     def agent(state: GraphState) -> dict:
-        return {"messages": [bound.invoke(state["messages"])]}
+        messages = state["messages"]
+        note = state.get("memory_note") or ""
+        if note:
+            messages = [SystemMessage(content=note), *messages]
+        return {"messages": [bound.invoke(messages)]}
 
     def _last_tool_calls(state: GraphState) -> list[dict]:
         last = state["messages"][-1]
@@ -39,7 +87,7 @@ def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None):
     def route_after_agent(state: GraphState) -> str:
         calls = _last_tool_calls(state)
         if not calls:
-            return END
+            return "post_turn"
         if any(spec.side_effect for call in calls if (spec := registry.get(call["name"]))):
             return "gate"
         return "tools"
@@ -96,19 +144,36 @@ def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None):
                 )
         return {"messages": messages, "pending_action": None}
 
+    def post_turn(state: GraphState) -> dict:
+        text = _last_human_text(state)
+        if not text or not has_explicit_memory_intent(text):
+            return {}
+        if contains_secret(text):
+            logger.warning("refused to memorize message: it looks like it carries a secret")
+            return {"messages": [AIMessage(content=MEMORY_REFUSAL)]}
+        try:
+            semantic.add([text])
+        except (RuntimeError, OSError) as exc:
+            logger.warning("memory write-back failed; turn continues", extra={"error": str(exc)})
+        return {}
+
     def aborted(state: GraphState) -> dict:
         names = ", ".join(item["name"] for item in (state.get("pending_action") or {}).get("tools", []))
         text = f"The proposed action ({names}) was rejected and was not executed."
         return {"messages": [AIMessage(content=text)], "pending_action": None}
 
     graph = StateGraph(GraphState)
+    graph.add_node("pre_agent", pre_agent)
     graph.add_node("agent", agent)
     graph.add_node("gate", gate)
     graph.add_node("tools", run_tools)
+    graph.add_node("post_turn", post_turn)
     graph.add_node("aborted", aborted)
-    graph.add_edge(START, "agent")
-    graph.add_conditional_edges("agent", route_after_agent, ["gate", "tools", END])
+    graph.add_edge(START, "pre_agent")
+    graph.add_edge("pre_agent", "agent")
+    graph.add_conditional_edges("agent", route_after_agent, ["gate", "tools", "post_turn"])
     graph.add_conditional_edges("gate", route_after_gate, ["tools", "aborted"])
     graph.add_edge("tools", "agent")
+    graph.add_edge("post_turn", END)
     graph.add_edge("aborted", END)
     return graph.compile(checkpointer=checkpointer if checkpointer is not None else make_checkpointer(settings.loom_data_dir))

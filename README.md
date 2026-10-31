@@ -4,7 +4,7 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, and Phase 3 scheduled routines are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, tests). Memory, calendar, email, and browser are not started. See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, and the Phase 4 memory baseline are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, tests). Calendar, email, and browser are not started. See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Loom is
 
@@ -48,11 +48,11 @@ Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the 
 | Language | Python | Engineering shell, core loop |
 | Orchestration | LangGraph | Core loop with approval gate |
 | Optional later | Pi as exec / sub-agent | Absent |
-| Memory | Mem0 + self-owned facts/preferences; agentic memory later | Absent |
+| Memory | Mem0 + self-owned facts/preferences; agentic memory later | Facts table + self-hosted Mem0 baseline |
 | Runtime | Local / single-host Docker | Sandbox service (compose) |
 | License | MIT | [LICENSE](LICENSE) |
 
-Dependencies are added only when a roadmap item needs them. The current runtime dependencies are pydantic-settings, LangGraph, the LangChain OpenAI integration, and APScheduler.
+Dependencies are added only when a roadmap item needs them. The current runtime dependencies are pydantic-settings, LangGraph, the LangChain OpenAI integration, APScheduler, and mem0ai (self-hosted semantic memory).
 
 ## How to run
 
@@ -96,6 +96,36 @@ Audit lines and checkpoints live under `LOOM_DATA_DIR`.
 聊天：在 `.env` 设置 `LLM_API_KEY`（可选 `LLM_MODEL`、`LLM_BASE_URL`），运行 `loom chat`。无害工具（`get_time`、`echo`）直接执行；副作用工具（`propose_sandbox_note`）会暂停并列出待批工具与参数，等待 `approve or reject?`：approve 执行、reject 不执行，两条路径都写入 `<LOOM_DATA_DIR>/audit/YYYYMMDD.jsonl`。用 `loom chat --thread-id <id>` 从检查点续跑同一会话；审计与检查点都在 `LOOM_DATA_DIR` 下。
 
 从源码安装：建 venv 并 `pip install -e ".[dev]"`，复制 `.env.example` 为 `.env`，把 `LOOM_ENV` 设为 `dev`，然后运行 `loom version` 与 `loom doctor`。doctor 对缺失 `.env`、非法配置（错误信息会指名变量，如 `LOOM_ENV`）、不可写的数据目录判失败；`LLM_API_KEY` 缺失只是警告，但 `loom chat` 必须设置它。
+
+### Memory
+
+Memory is two stores with one priority rule. The facts table (`<LOOM_DATA_DIR>/facts.db`) holds authoritative facts and preferences that you manage yourself. Semantic memory is self-hosted Mem0: its vector store and history db live under `<LOOM_DATA_DIR>/memory/`, no Mem0 cloud key is involved, and its telemetry is disabled unless you explicitly set `MEM0_TELEMETRY=true`.
+
+Configuration (both in `.env`):
+
+- `LOOM_MEMORY_ENABLED` — `false` turns the semantic layer off entirely; the graph and CLI then run without any Mem0 endpoint (the facts table keeps working). Default `true`.
+- `LOOM_MEMORY_INJECT_LIMIT` — how many memory entries are injected into the model each turn, facts first (default 5).
+
+The endpoint configured through `LLM_BASE_URL` (or the OpenAI default) must serve BOTH chat completions and embeddings: Mem0 uses the chat model to extract memories and the embedding model to index and query them. If the semantic store fails, the turn degrades instead of crashing: a warning is logged and the facts table alone is injected.
+
+```bash
+loom memory facts                            # list facts (bare `loom memory` does the same)
+loom memory facts set reply_language 中文     # insert or correct one fact
+loom memory facts del reply_language         # delete one fact
+loom memory search "reply style"             # query the semantic store
+```
+
+Table over Mem0: the injected note lists facts-table entries first, labeled 权威 (authoritative), then Mem0 results, labeled 参考 (reference), and tells the model to prefer the facts table on conflict.
+
+Write-back rule: ordinary chat never writes memory. A message is stored only when it uses explicit preference or fact language — the trigger words are 记住, 以后, 总是, 喜欢, 偏好, 不要再, remember, always, prefer, from now on. Anything that looks like a secret (an `sk-`/`pk_`/`ghp_`/`AKIA`/`xox`-prefixed token, or a long token-like string in a message that also contains key/token/secret/password) is refused at both entry paths — `loom memory facts set` and the chat write-back — logged, and never stored.
+
+A no-key demo of the whole baseline (fake semantic store on the same seams, scripted model):
+
+```bash
+python scripts/demo_gate3_memory.py
+```
+
+记忆：两个存储、一条优先级规则。事实表（`<LOOM_DATA_DIR>/facts.db`）存权威事实与偏好，由你通过 CLI 管理；语义记忆用自托管 Mem0（向量库与历史库在 `<LOOM_DATA_DIR>/memory/` 下，不需要 Mem0 云 key，遥测默认关闭，除非显式设置 `MEM0_TELEMETRY=true`）。`LOOM_MEMORY_ENABLED=false` 可整体关闭语义层（图与 CLI 不再需要 Mem0 端点，事实表照常工作）；`LOOM_MEMORY_INJECT_LIMIT` 控制每轮注入模型的记忆条数（默认 5，事实优先）。注意 `LLM_BASE_URL` 指向的端点必须同时支持 chat completions 与 embeddings：Mem0 用聊天模型抽取记忆、用 embedding 模型建索引与检索；语义层故障时回合降级不崩溃，只记警告并仅注入事实表。注入规则：事实表条目在前、标注 权威，Mem0 结果在后、标注 参考，冲突时以事实表为准。写回规则：普通聊天不写记忆，只有出现明确偏好/事实措辞（记住、以后、总是、喜欢、偏好、不要再、remember、always、prefer、from now on）才写回；疑似密钥（`sk-`/`pk_`/`ghp_`/`AKIA`/`xox` 前缀，或 key/token/secret/password 附近的长 token 串）在 `loom memory facts set` 与聊天写回两条路径都会被拒绝并记日志，绝不入库。试运行：`python scripts/demo_gate3_memory.py`（无需 API key）。
 
 ### Sandbox
 

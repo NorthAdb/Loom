@@ -32,8 +32,12 @@ def clean_env(monkeypatch, tmp_path):
     for name in (
         "LOOM_ENV", "LOOM_LOG_LEVEL", "LOOM_DATA_DIR", "LOOM_SANDBOX_ROOT", "LOOM_SANDBOX_URL",
         "LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL",
+        "LOOM_MEMORY_ENABLED", "LOOM_MEMORY_INJECT_LIMIT", "MEM0_TELEMETRY",
     ):
         monkeypatch.delenv(name, raising=False)
+    # Memory tests inject fakes through the seams; everything else runs with the
+    # semantic layer off so no test needs an API key or a Mem0 endpoint.
+    monkeypatch.setenv("LOOM_MEMORY_ENABLED", "false")
     monkeypatch.chdir(tmp_path)
     yield
     get_settings.cache_clear()

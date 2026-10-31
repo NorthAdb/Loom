@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(default="", validation_alias="LLM_API_KEY")
     llm_model: str = Field(default="gpt-4o-mini", validation_alias="LLM_MODEL")
     llm_base_url: str = Field(default="", validation_alias="LLM_BASE_URL")
+    memory_enabled: bool = Field(default=True, validation_alias="LOOM_MEMORY_ENABLED")
+    memory_inject_limit: int = Field(default=5, validation_alias="LOOM_MEMORY_INJECT_LIMIT")
 
 
 def _describe_errors(exc: ValidationError) -> str:
