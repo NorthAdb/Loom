@@ -314,8 +314,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(loom.__version__)
         return 0
     if args.command == "chat":
-        command: Callable[[argparse.Namespace], int] = partial(_chat, args.thread_id)
-    elif args.command == "routines":
+        try:
+            return _chat(args.thread_id)
+        except ConfigError as exc:
+            print(f"config error: {exc}")
+            return 1
+    if args.command == "routines":
         handlers = {
             "add": _routines_add,
             "list": _routines_list,

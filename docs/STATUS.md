@@ -2,7 +2,7 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-10-31 (Gate 2 materials: Phase 0-3 merged).
+Last updated: 2026-10-31 (Gate 2 rework: chat CLI wiring fixed, main-path smoke tests added).
 
 ## Done
 
