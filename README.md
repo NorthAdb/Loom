@@ -60,7 +60,7 @@ The agent runs: a chat loop over the LangGraph graph with tools, the approval ga
 
 ```bash
 python -m venv .venv
-source .venv/Scripts/activate    # Windows Git Bash; macOS/Linux: source .venv/bin/activate
+source .venv/bin/activate        # macOS/Linux; Windows Git Bash: source .venv/Scripts/activate
 pip install -e ".[dev]"
 cp .env.example .env             # then edit .env and set LOOM_ENV=dev
 ```
@@ -108,7 +108,7 @@ File tools work only inside the sandbox jail. Two transports, one rule set:
 docker compose up -d --build    # starts loom-sandbox on 127.0.0.1:8765
 ```
 
-The container mounts only the sandbox workspace volume (`LOOM_SANDBOX_ROOT`), runs as a non-root user with a read-only root filesystem, and has CPU/memory caps. No `docker.sock`, no home mounts.
+The container mounts only the sandbox workspace volume (`LOOM_SANDBOX_ROOT`), runs as a non-root user with a read-only root filesystem, and has CPU/memory caps. No `docker.sock`, no home mounts. The mounted directory must be writable by the container's uid 10001, or every HTTP write fails with Permission denied; on a host where the directory is owned by another user, run `chown -R 10001:10001 <dir>` first.
 
 Configuration (both go in `.env`):
 

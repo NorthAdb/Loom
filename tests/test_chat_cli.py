@@ -85,3 +85,65 @@ def test_chat_command_builds_the_graph_through_the_cli_factory(monkeypatch, tmp_
     assert any(line.startswith("thread ") for line in lines)
     assert (tmp_path / "notes" / "e.txt").read_text(encoding="utf-8") == "wired"
     assert lines[-1] == "goodbye"
+
+
+def test_main_chat_smoke_quits_cleanly(monkeypatch, tmp_path, capsys):
+    """The full argv path through main: a crash here is a Gate-blocking regression."""
+    import io
+
+    monkeypatch.setenv("LOOM_ENV", "dev")
+    monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: ScriptedChatModel(messages=iter([])))
+    monkeypatch.setattr("sys.stdin", io.StringIO("quit\n"))
+
+    code = loom.cli.main(["chat"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "thread " in out
+    assert out.strip().endswith("goodbye")
+
+
+def test_main_chat_approve_path_writes_the_file(monkeypatch, tmp_path, capsys):
+    """The approve flow works when entered through main, not only through _chat."""
+    import io
+
+    monkeypatch.setenv("LOOM_ENV", "dev")
+    monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
+    scripted = [
+        tool_call_msg("propose_sandbox_note", {"filename": "main.txt", "content": "via main"}),
+        AIMessage(content="note written"),
+    ]
+    model = ScriptedChatModel(messages=iter(scripted))
+    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: model)
+    monkeypatch.setattr("sys.stdin", io.StringIO("save a note\napprove\nquit\n"))
+
+    code = loom.cli.main(["chat"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "approval needed: propose_sandbox_note" in out
+    assert (tmp_path / "notes" / "main.txt").read_text(encoding="utf-8") == "via main"
+    assert audit_decisions(tmp_path) == ["approved", "executed"]
+
+
+def test_main_chat_resume_thread_from_checkpoint(monkeypatch, tmp_path, capsys):
+    """--thread-id through main reads the prior checkpoint instead of starting fresh."""
+    import io
+
+    monkeypatch.setenv("LOOM_ENV", "dev")
+    monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
+    first = ScriptedChatModel(messages=iter([AIMessage(content="first answer")]))
+    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: first)
+    monkeypatch.setattr("sys.stdin", io.StringIO("hello\nquit\n"))
+    assert loom.cli.main(["chat"]) == 0
+    thread_id = next(line.split()[1] for line in capsys.readouterr().out.splitlines() if line.startswith("thread "))
+
+    second = ScriptedChatModel(messages=iter([AIMessage(content="second answer")]))
+    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: second)
+    monkeypatch.setattr("sys.stdin", io.StringIO("again\nquit\n"))
+    assert loom.cli.main(["chat", "--thread-id", thread_id]) == 0
+
+    out = capsys.readouterr().out
+    assert f"thread {thread_id}" in out
+    assert "second answer" in out
