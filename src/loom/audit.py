@@ -15,10 +15,14 @@ def redact_args(args: dict[str, Any]) -> dict[str, Any]:
     return {name: ("***" if is_sensitive(name) else value) for name, value in args.items()}
 
 
-def summarize_args(args: dict[str, Any]) -> str:
-    """Serialize args for records and interrupt payloads: redacted, long values capped."""
+def summarize_args(args: dict[str, Any], cap: int = _VALUE_CAP) -> str:
+    """Serialize args for records and interrupt payloads: redacted, string values capped.
+
+    Audit records keep the default cap; the gate's interrupt payload passes a
+    larger one so an approval can show a full draft text.
+    """
     redacted = redact_args(args)
-    capped = {name: (value[:_VALUE_CAP] if isinstance(value, str) else value) for name, value in redacted.items()}
+    capped = {name: (value[:cap] if isinstance(value, str) else value) for name, value in redacted.items()}
     return json.dumps(capped, ensure_ascii=False)
 
 

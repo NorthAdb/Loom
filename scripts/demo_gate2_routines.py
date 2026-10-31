@@ -17,12 +17,16 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 import loom.cli
+import loom.graph
 import loom.runtime
 from loom.config import Settings
 from loom.graph import build_graph
+from loom.memory import NullSemanticMemory
 from loom.pending import PendingStore
 from loom.routines import Routine, RoutineStore
 from loom.runner import run_routine
+
+loom.graph.build_semantic_memory = lambda settings: NullSemanticMemory()
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "sandbox_messy"
 

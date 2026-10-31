@@ -4,7 +4,7 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, and the Phase 4 memory baseline are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, tests). Calendar, email, and browser are not started. See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, and the Phase 5 calendar + email drafts are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, tests). Browser fill is not started. See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Loom is
 
@@ -52,7 +52,7 @@ Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the 
 | Runtime | Local / single-host Docker | Sandbox service (compose) |
 | License | MIT | [LICENSE](LICENSE) |
 
-Dependencies are added only when a roadmap item needs them. The current runtime dependencies are pydantic-settings, LangGraph, the LangChain OpenAI integration, APScheduler, and mem0ai (self-hosted semantic memory).
+Dependencies are added only when a roadmap item needs them. The current runtime dependencies are pydantic-settings, LangGraph, the LangChain OpenAI integration, APScheduler, mem0ai (self-hosted semantic memory), and icalendar (ICS parsing; brings python-dateutil and tzdata).
 
 ## How to run
 
@@ -73,7 +73,7 @@ loom doctor     # one line per check; exits 1 while a critical check fails
 pytest          # runs the test suite
 ```
 
-`loom doctor` fails on a missing `.env`, a broken config (the message names the variable, e.g. `LOOM_ENV`), or a data directory it cannot create or write. A missing `LLM_API_KEY` is a warning; `loom chat` needs it.
+`loom doctor` fails on a missing `.env`, a broken config (the message names the variable, e.g. `LOOM_ENV`), or a data directory it cannot create or write. A missing `LLM_API_KEY` is a warning; `loom chat` needs it. A configured `LOOM_ICAL_URL` or `LOOM_IMAP_HOST` gets its own check line (unreachable = FAIL); when unset, the line is skipped entirely.
 
 ### Chat
 
@@ -126,6 +126,48 @@ python scripts/demo_gate3_memory.py
 ```
 
 记忆：两个存储、一条优先级规则。事实表（`<LOOM_DATA_DIR>/facts.db`）存权威事实与偏好，由你通过 CLI 管理；语义记忆用自托管 Mem0（向量库与历史库在 `<LOOM_DATA_DIR>/memory/` 下，不需要 Mem0 云 key，遥测默认关闭，除非显式设置 `MEM0_TELEMETRY=true`）。`LOOM_MEMORY_ENABLED=false` 可整体关闭语义层（图与 CLI 不再需要 Mem0 端点，事实表照常工作）；`LOOM_MEMORY_INJECT_LIMIT` 控制每轮注入模型的记忆条数（默认 5，事实优先）。注意 `LLM_BASE_URL` 指向的端点必须同时支持 chat completions 与 embeddings：Mem0 用聊天模型抽取记忆、用 embedding 模型建索引与检索；语义层故障时回合降级不崩溃，只记警告并仅注入事实表。注入规则：事实表条目在前、标注 权威，Mem0 结果在后、标注 参考，冲突时以事实表为准。写回规则：普通聊天不写记忆，只有出现明确偏好/事实措辞（记住、以后、总是、喜欢、偏好、不要再、remember、always、prefer、from now on）才写回；疑似密钥（`sk-`/`pk_`/`ghp_`/`AKIA`/`xox` 前缀，或 key/token/secret/password 附近的长 token 串）在 `loom memory facts set` 与聊天写回两条路径都会被拒绝并记日志，绝不入库。试运行：`python scripts/demo_gate3_memory.py`（无需 API key）。
+
+### Calendar and email drafts
+
+Calendar tools are read-only and mail tools are draft-only. There is no send path: the codebase has no send tool, no SMTP, and the gate tests (`pytest tests/test_gate3_guards.py`) fail if a send or calendar-write symbol ever appears in `src/loom`. 日历只读、邮件只草稿：代码库中没有发送路径，门禁测试保证 send / 日历写入符号不会出现。
+
+Configuration (all in `.env`; a variable left empty disables that feature):
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `LOOM_ICAL_URL` | Read-only ICS feed URL; empty turns the calendar tools off | empty |
+| `LOOM_IMAP_HOST` | IMAP server; empty turns the mail tools off | empty |
+| `LOOM_IMAP_PORT` | IMAPS port | `993` |
+| `LOOM_MAIL_USER` | Mailbox login, also used as the draft's From address | empty |
+| `LOOM_MAIL_PASSWORD` | App password (never your login password) | empty |
+| `LOOM_MAIL_FOLDER` | Folder drafts are appended to | `Drafts` |
+| `LOOM_TIMEZONE` | IANA timezone for calendar windows and summaries | `Asia/Hong_Kong` |
+
+**Calendar (read-only).** Paste the calendar's ICS feed URL as `LOOM_ICAL_URL`. Google Calendar: calendar Settings → "Integrate calendar" → copy the **secret address in iCal format**. Outlook.com: calendar → Share → publish, then copy the ICS link. Google 日历：设置 → 集成日历 → 复制 "iCal 格式的 secret 地址"；Outlook：共享 → 发布日历 → 复制 ICS 链接。The feed is fetched read-only and summarized in `LOOM_TIMEZONE`.
+
+**Mail drafts (IMAP).** Use an app password, not your login password. Gmail: enable 2-Step Verification, then create an app password (Google Account → Security → App passwords) and set `LOOM_IMAP_HOST=imap.gmail.com`. A draft is appended with the `\Draft` flag to `LOOM_MAIL_FOLDER` (`[Gmail]/Drafts` on Gmail); the From address is `LOOM_MAIL_USER`. Gmail 需要 2FA + 应用专用密码，主机填 `imap.gmail.com`，草稿夹用 `[Gmail]/Drafts`。
+
+The four tools and the gate:
+
+| Tool | Side effect |
+| --- | --- |
+| `calendar_list_events` (today / tomorrow / week), `calendar_summarize_range` (ISO dates) | no — fetches and renders only |
+| `mail_create_draft(to, subject, body)`, `mail_update_draft(draft_id, to, subject, body)` | yes — pauses for approval |
+
+A draft pauses with its **full recipient, subject, and body** in the approval prompt; `reject` never touches the IMAP server, and `approve` appends or replaces the draft — it is never sent. Credentials are read from Settings by the transports themselves; they never appear in tool arguments, audit records, or logs (audit argument lines stay capped at 200 characters). 草稿审批会展示完整收件人、主题与正文；reject 时不会调用 IMAP 服务器，approve 后只落草稿、绝不发送；凭证只从配置读取，不进工具参数、审计或日志。
+
+A no-key demo of the whole path (local HTTP ICS feed, scripted model, fake mail transport):
+
+```bash
+python scripts/demo_gate3_calendar_mail.py
+```
+
+Example prompts / 示例提示词：
+
+```text
+What's on tomorrow?          /  总结明天日程
+Draft a mail to peer@x about the plan  /  给 peer@x 写一封关于计划的邮件草稿
+```
 
 ### Sandbox
 

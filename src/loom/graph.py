@@ -30,6 +30,10 @@ MEMORY_REFUSAL = (
     "so nothing was saved to memory."
 )
 
+# The interrupt payload cap is larger than the audit cap so a draft's full text
+# is visible at approval; see summarize_args.
+_GATE_PAYLOAD_CAP = 2000
+
 
 class GraphState(TypedDict):
     messages: Annotated[list, add_messages]
@@ -48,11 +52,17 @@ def _last_human_text(state: GraphState) -> str:
     return ""
 
 
-def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None, memory: SemanticMemory | None = None):
+def build_graph(
+    model: BaseChatModel,
+    settings: Settings,
+    checkpointer=None,
+    memory: SemanticMemory | None = None,
+    transports: dict | None = None,
+):
     """Compile the pre_agent/agent/gate/tools/post_turn/aborted graph. Long-lived callers pass the
-    checkpointer so the connection lifecycle stays with them. Tests inject a fake `memory`;
-    None builds the real one from settings (no-op when LOOM_MEMORY_ENABLED is false)."""
-    registry = make_tools(settings)
+    checkpointer so the connection lifecycle stays with them. Tests inject a fake `memory` and
+    fake mail/calendar `transports`; None builds the real ones from settings."""
+    registry = make_tools(settings, transports)
     audit = AuditLog(settings.loom_data_dir)
     facts_store = FactsStore(settings.loom_data_dir)
     semantic: SemanticMemory = memory if memory is not None else build_semantic_memory(settings)
@@ -95,7 +105,7 @@ def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None, mem
     def gate(state: GraphState) -> dict:
         calls = [c for c in _last_tool_calls(state) if (spec := registry.get(c["name"])) and spec.side_effect]
         payload = {
-            "tools": [{"name": c["name"], "args": summarize_args(c["args"])} for c in calls],
+            "tools": [{"name": c["name"], "args": summarize_args(c["args"], cap=_GATE_PAYLOAD_CAP)} for c in calls],
             "reason": "These tools change state and need human approval.",
         }
         resume = interrupt(payload)
