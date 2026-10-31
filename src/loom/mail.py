@@ -57,6 +57,12 @@ def _validate_draft_id(old_id: str) -> None:
         raise ValueError(f"draft id is not a Message-ID: {old_id!r}")
     if any(ch in old_id for ch in ('"', "\r", "\n")):
         raise ValueError(f"draft id contains forbidden characters: {old_id!r}")
+    if len(old_id) > 998:
+        # RFC 5322 caps a header line at 998 characters, so a longer id cannot
+        # be a real Message-ID and would truncate inside approval payloads.
+        raise ValueError(
+            f"draft id is longer than the 998-character Message-ID line limit ({len(old_id)} characters)"
+        )
 
 
 def _imap_quote(mailbox: str) -> str:

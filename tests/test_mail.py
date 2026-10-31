@@ -296,6 +296,28 @@ def test_replace_draft_rejects_a_non_message_id_before_touching_imap(monkeypatch
     assert client.calls == []
 
 
+def test_replace_draft_rejects_a_draft_id_over_the_rfc_line_bound(monkeypatch, tmp_path):
+    client = FakeIMAPClient()
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    with pytest.raises(ValueError, match="998"):
+        transport.replace_draft("<" + "a" * 997 + ">", message)
+
+    assert client.calls == []
+
+
+def test_replace_draft_accepts_a_draft_id_at_the_rfc_line_bound(monkeypatch, tmp_path):
+    client = FakeIMAPClient(search_hits=b"")
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    with pytest.raises(ValueError, match="found 0"):
+        transport.replace_draft("<" + "a" * 996 + ">", message)
+
+
 def test_mail_folder_inbox_is_rejected_by_config():
     with pytest.raises(ConfigError, match="LOOM_MAIL_FOLDER"):
         Settings(loom_env="dev", mail_folder="INBOX")
