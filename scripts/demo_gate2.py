@@ -21,10 +21,7 @@ from loom.graph import build_graph
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "sandbox_messy"
 
-MESSY = [
-    "report.txt", "notes.md", "data.csv", "log.txt", "photo.jpg",
-    "image.png", "song.mp3", "scan.pdf", "script.py", "archive.zip",
-]
+MESSY = sorted(entry.name for entry in FIXTURES.iterdir() if entry.is_file())
 
 
 class ScriptedChatModel(GenericFakeChatModel):

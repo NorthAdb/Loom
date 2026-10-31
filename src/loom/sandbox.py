@@ -26,8 +26,8 @@ def _jail(root: Path, raw: str, what: str) -> Path:
     return resolved
 
 
-def _entries(root: Path, raw: str) -> dict:
-    target = _jail(root, raw, "path")
+def _entries(root: Path, args: dict[str, Any]) -> dict:
+    target = _jail(root, args.get("path", "."), "path")
     listing = []
     for entry in sorted(target.iterdir(), key=lambda item: item.name):
         listing.append({
@@ -84,7 +84,7 @@ def _delete(root: Path, args: dict[str, Any]) -> dict:
 
 
 _OPS = {
-    "list_dir": lambda root, args: _entries(root, args.get("path") or "."),
+    "list_dir": _entries,
     "read_file": _read,
     "write_file": _write,
     "mkdir": _mkdir,
@@ -138,7 +138,7 @@ class HttpSandboxTransport:
                 body = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             raise ValueError(self._error_from(exc)) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except OSError as exc:
             raise RuntimeError(
                 f"sandbox service unreachable at {self._base} ({exc}); "
                 "start it with: docker compose up -d --build"

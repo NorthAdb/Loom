@@ -44,8 +44,8 @@ def _writable(path: Path) -> bool:
 def _sandbox_reachable(base_url: str) -> bool:
     try:
         with urllib.request.urlopen(f"{base_url.rstrip('/')}/health", timeout=2) as response:
-            return bool(response) and response.status == 200
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return response.status == 200
+    except (OSError, ValueError):
         return False
 
 

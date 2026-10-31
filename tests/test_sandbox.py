@@ -31,6 +31,13 @@ def test_list_dir_reports_sorted_entries(tmp_path):
     assert call("list_dir", {"path": "."}) == call("list_dir", {})
 
 
+def test_list_dir_rejects_an_explicit_empty_path(tmp_path):
+    call, _ = make_sandbox(tmp_path)
+
+    with pytest.raises(ValueError, match="non-empty"):
+        call("list_dir", {"path": ""})
+
+
 def test_move_delete_round_trip(tmp_path):
     call, root = make_sandbox(tmp_path)
     call("write_file", {"path": "old.txt", "content": "data"})

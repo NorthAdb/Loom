@@ -49,18 +49,11 @@ class SandboxHandler(BaseHTTPRequestHandler):
 
 
 class SandboxServer(ThreadingHTTPServer):
-    """Threading server bound to one sandbox root; each request gets its own thread."""
-
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], root: Path) -> None:
+    def __init__(self, root: Path, host: str = "0.0.0.0", port: int = 8765) -> None:
         self.root = Path(root)
-        super().__init__(address, SandboxHandler)
-
-
-def make_server(root: Path, host: str = "0.0.0.0", port: int = 8765) -> SandboxServer:
-    """Build the server; port 0 picks an ephemeral port (tests)."""
-    return SandboxServer((host, port), root)
+        super().__init__((host, port), SandboxHandler)
 
 
 def main() -> int:
@@ -70,7 +63,7 @@ def main() -> int:
     parser.add_argument("--root", default="./sandbox", help="Directory every op is jailed to.")
     args = parser.parse_args()
 
-    server = make_server(Path(args.root), host=args.host, port=args.port)
+    server = SandboxServer(Path(args.root), host=args.host, port=args.port)
     print(f"loom sandbox serving {server.root} on {args.host}:{args.port}")
     try:
         server.serve_forever()

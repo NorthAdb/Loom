@@ -5,12 +5,12 @@ import urllib.request
 import pytest
 
 from loom.sandbox import HttpSandboxTransport
-from loom.sandbox_server import make_server
+from loom.sandbox_server import SandboxServer
 
 
 @pytest.fixture
 def sandbox_service(tmp_path):
-    server = make_server(tmp_path, host="127.0.0.1", port=0)
+    server = SandboxServer(tmp_path, host="127.0.0.1", port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield f"http://127.0.0.1:{server.server_address[1]}", tmp_path
