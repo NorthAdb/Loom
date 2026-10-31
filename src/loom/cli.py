@@ -57,11 +57,11 @@ def _sandbox_reachable(base_url: str) -> bool:
         return False
 
 
-def _ical_reachable(url: str) -> bool:
-    """One GET of the ICS feed; any transport error means unreachable."""
+def _calendar_reachable(url: str) -> bool:
+    """One GET of the ICS feed; any failure means unreachable. Never raises."""
     try:
         HttpCalendarTransport(url, timeout=2).fetch_ics()
-    except RuntimeError:
+    except Exception:  # noqa: BLE001 - doctor prints a FAIL line, never a traceback
         return False
     return True
 
@@ -128,7 +128,7 @@ def _doctor() -> int:
     ical_url = settings.ical_url if settings else os.environ.get("LOOM_ICAL_URL", "")
     if ical_url:
         shown = redact_url(ical_url)
-        if _ical_reachable(ical_url):
+        if _calendar_reachable(ical_url):
             print(f"{_OK}calendar feed {shown}")
         else:
             print(f"{_FAIL}calendar feed {shown} (no ICS response; check LOOM_ICAL_URL)")
@@ -140,10 +140,14 @@ def _doctor() -> int:
             imap_port = settings.imap_port if settings else int(os.environ.get("LOOM_IMAP_PORT") or "993")
         except ValueError:
             imap_port = -1
+        folder = settings.mail_folder if settings else os.environ.get("LOOM_MAIL_FOLDER", "") or "Drafts"
         if _imap_reachable(imap_host, imap_port):
-            print(f"{_OK}imap {imap_host}:{imap_port}")
+            print(f"{_OK}imap {imap_host}:{imap_port} drafts folder {folder}")
         else:
-            print(f"{_FAIL}imap {imap_host}:{imap_port} (no TCP connection; check LOOM_IMAP_HOST and LOOM_IMAP_PORT)")
+            print(
+                f"{_FAIL}imap {imap_host}:{imap_port} drafts folder {folder} "
+                "(no TCP connection; check LOOM_IMAP_HOST and LOOM_IMAP_PORT)"
+            )
             failed = True
 
     return 1 if failed else 0

@@ -1,3 +1,5 @@
+import pytest
+
 from loom import cli
 
 
@@ -179,3 +181,38 @@ def test_doctor_tolerates_a_non_integer_imap_port_without_crashing(capsys):
     assert code != 0
     assert "imap" in out
     assert "FAIL" in out
+
+
+@pytest.mark.parametrize(
+    ("url", "secret", "shown"),
+    [
+        (
+            "https://calendar.google.com/calendar/ical/owner%40group/private-cbd8f2basic.ics",
+            "cbd8f2",
+            "https://calendar.google.com/…",
+        ),
+        ("https://example.com/ics?token=supersecret1", "supersecret1", "https://example.com/…"),
+        ("https://user:topsecret@example.com/ics.ics", "topsecret", "https://example.com/…"),
+    ],
+)
+def test_doctor_output_never_contains_ics_secret(monkeypatch, capsys, tmp_path, url, secret, shown):
+    """An unreachable feed prints the FAIL line with scheme and host only."""
+
+    class _DeadTransport:
+        def __init__(self, url, timeout=2.0):
+            pass
+
+        def fetch_ics(self):
+            raise RuntimeError("dead feed (stubbed so the test needs no network)")
+
+    monkeypatch.setattr("loom.cli.HttpCalendarTransport", _DeadTransport)
+    (tmp_path / ".env").write_text(_env_file(tmp_path, f"LOOM_ICAL_URL={url}\n"), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = cli.main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert code != 0
+    assert "FAIL" in out and shown in out
+    assert secret not in out, "the ICS secret must never reach doctor output"
+    assert "Traceback" not in out
