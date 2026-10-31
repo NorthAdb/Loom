@@ -18,13 +18,16 @@ def test_registry_declares_exactly_the_expected_side_effect_flags(tmp_path):
 
     assert set(registry) == {
         "get_time", "echo", "list_dir", "read_file", "write_file", "mkdir", "move_file", "delete_file",
-        "propose_sandbox_note",
+        "propose_sandbox_note", "calendar_list_events", "calendar_summarize_range",
+        "mail_create_draft", "mail_update_draft",
     }
     assert {name for name, spec in registry.items() if spec.side_effect} == {
         "write_file", "mkdir", "move_file", "delete_file", "propose_sandbox_note",
+        "mail_create_draft", "mail_update_draft",
     }
     assert {name for name, spec in registry.items() if not spec.side_effect} == {
         "get_time", "echo", "list_dir", "read_file",
+        "calendar_list_events", "calendar_summarize_range",
     }
 
 

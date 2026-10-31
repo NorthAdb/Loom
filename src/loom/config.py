@@ -3,8 +3,9 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,8 +13,15 @@ class ConfigError(ValueError):
     """Raised when required configuration is missing or invalid."""
 
 
+_DEFAULT_IMAP_PORT = 993
+_DEFAULT_MAIL_FOLDER = "Drafts"
+_DEFAULT_TIMEZONE = "Asia/Hong_Kong"
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # populate_by_name: the newer fields (mail_user, ...) are not uppercase
+    # variants of their aliases, so direct construction by field name needs this.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     loom_env: Literal["dev", "prod"] = Field(validation_alias="LOOM_ENV")
     loom_log_level: Literal["debug", "info", "warning", "error"] = Field(
@@ -27,6 +35,24 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="", validation_alias="LLM_BASE_URL")
     memory_enabled: bool = Field(default=True, validation_alias="LOOM_MEMORY_ENABLED")
     memory_inject_limit: int = Field(default=5, validation_alias="LOOM_MEMORY_INJECT_LIMIT")
+    ical_url: str = Field(default="", validation_alias="LOOM_ICAL_URL")
+    imap_host: str = Field(default="", validation_alias="LOOM_IMAP_HOST")
+    imap_port: int = Field(default=_DEFAULT_IMAP_PORT, validation_alias="LOOM_IMAP_PORT")
+    mail_user: str = Field(default="", validation_alias="LOOM_MAIL_USER")
+    mail_password: str = Field(default="", validation_alias="LOOM_MAIL_PASSWORD")
+    mail_folder: str = Field(default=_DEFAULT_MAIL_FOLDER, validation_alias="LOOM_MAIL_FOLDER")
+    timezone_name: str = Field(default=_DEFAULT_TIMEZONE, validation_alias="LOOM_TIMEZONE")
+
+    @field_validator("imap_port", "mail_folder", "timezone_name", mode="before")
+    @classmethod
+    def _empty_means_default(cls, value, info):
+        # An empty env var is "unset", so the declared default applies. Without
+        # this, an empty LOOM_IMAP_PORT fails int parsing and an empty
+        # LOOM_MAIL_FOLDER / LOOM_TIMEZONE would override its default with "".
+        defaults = {"imap_port": _DEFAULT_IMAP_PORT, "mail_folder": _DEFAULT_MAIL_FOLDER, "timezone_name": _DEFAULT_TIMEZONE}
+        if value in ("", None):
+            return defaults[info.field_name]
+        return value
 
 
 def _describe_errors(exc: ValidationError) -> str:
@@ -39,6 +65,11 @@ def _describe_errors(exc: ValidationError) -> str:
 def get_settings() -> Settings:
     """Load and cache Settings. A missing or invalid value raises ConfigError naming the env var."""
     try:
-        return Settings()
+        settings = Settings()
     except ValidationError as exc:
         raise ConfigError(f"Invalid configuration: {_describe_errors(exc)}") from exc
+    try:
+        ZoneInfo(settings.timezone_name)
+    except (KeyError, ValueError, ZoneInfoNotFoundError) as exc:
+        raise ConfigError(f"LOOM_TIMEZONE: unknown timezone {settings.timezone_name!r}") from exc
+    return settings
