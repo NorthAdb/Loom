@@ -2,7 +2,7 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-10-31 (Gate 1 materials: Phase 0 + Phase 1 merged).
+Last updated: 2026-10-31 (Phase 2 sandbox merged; Gate 1 materials: Phase 0 + Phase 1 merged).
 
 ## Done
 
@@ -12,6 +12,9 @@ Last updated: 2026-10-31 (Gate 1 materials: Phase 0 + Phase 1 merged).
 - [x] LangGraph orchestration
 - [x] Approval gate for side effects
 - [x] Phase 1 core loop: `loom chat` REPL, tool registry with side-effect flags, interrupt-based approval gate, append-only JSONL audit, sqlite checkpoints, mock-model-tested
+- [x] Phase 2 file sandbox: jailed sandbox dispatcher (path jail, 1 MiB read cap), local in-process and HTTP transports, six file tools (`list_dir` / `read_file` unapproved; `write_file` / `mkdir` / `move_file` / `delete_file` behind the gate), compose service with non-root user, read-only root filesystem and resource caps, `fixtures/sandbox_messy/`, tidy demo `scripts/demo_gate2.py`, doctor sandbox check
+- [x] Local file sandbox
+- [x] Local single-host Docker runtime (sandbox service; the agent loop still runs on the host)
 
 ## In progress
 
@@ -21,11 +24,9 @@ Last updated: 2026-10-31 (Gate 1 materials: Phase 0 + Phase 1 merged).
 
 ### P0 — Sandbox, routines, approval
 
-- [ ] Local file sandbox
 - [ ] Scheduled routines
 - [ ] Memory baseline: Mem0
 - [ ] Memory baseline: self-owned facts and preferences table
-- [ ] Local single-host Docker runtime
 
 ### P1 — Calendar and email drafts
 

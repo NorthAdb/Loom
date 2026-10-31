@@ -1,6 +1,6 @@
 # Architecture
 
-Target shape for Loom. The core loop is implemented; the remaining layers exist only as design. Checklist: [STATUS.md](STATUS.md).
+Target shape for Loom. The core loop and the file sandbox layer are implemented; the remaining layers exist only as design. Checklist: [STATUS.md](STATUS.md).
 
 ## Implemented loop
 
@@ -12,7 +12,7 @@ The core loop lives in `src/loom`. `loom chat` reads a line and invokes a LangGr
 2. **LangGraph.** Primary orchestration. The graph chooses tools, decides when to stop, and decides when to ask for approval. This is the center of the system.
 3. **Tools and MCP.** Capabilities are tools. MCP is the intended way to attach external capabilities (calendar read, mail draft, browser). No servers are configured in this repository.
 4. **Memory.** The first memory cut has two stores: Mem0, and a self-owned table of facts and preferences. Agentic memory is a later layer on top of those stores. It does not replace them.
-5. **Docker sandbox.** Single-host Docker is the runtime. Local file work happens inside the sandbox. The sandbox is the process and filesystem boundary for the agent.
+5. **Docker sandbox.** Single-host Docker is the runtime. Local file work happens inside the sandbox, which exists now: a jailed dispatcher in `src/loom/sandbox.py` reached either in-process or over HTTP from the `loom-sandbox` compose service (non-root, read-only root filesystem, only the workspace volume mounted). The jail rejects every path that resolves outside the sandbox root, so both transports enforce the same boundary.
 
 ## Approval gate
 
@@ -50,10 +50,14 @@ person / scheduler
 ## What the code layout is today
 
 ```text
-src/loom/          Config, logging, tool registry, audit log, LangGraph loop, CLI
-scripts/           Gate demo (scripts/demo_gate1.py)
+src/loom/          Config, logging, tool registry, sandbox dispatcher and transports,
+                   sandbox HTTP server, audit log, LangGraph loop, CLI
+fixtures/          Sandbox demo input (fixtures/sandbox_messy/)
+scripts/           Gate demos (scripts/demo_gate1.py, scripts/demo_gate2.py)
 docs/              Product and engineering record
 pyproject.toml     Package metadata and runtime dependencies
+Dockerfile         Sandbox service image (two stdlib-only files, non-root)
+compose.yml        loom-sandbox service with limits and a healthcheck
 ```
 
 Add a layer’s code only when [ROADMAP.md](ROADMAP.md) and [STATUS.md](STATUS.md) move that item forward. Do not add unused frameworks ahead of that.

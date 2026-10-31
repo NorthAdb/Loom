@@ -1,6 +1,6 @@
 # Security
 
-Constraints for every later change. Nothing in this file is implemented yet. [STATUS.md](STATUS.md) is the checklist; this file is the rule set those items have to satisfy.
+Constraints for every later change. The approval gate and the file sandbox boundary below are implemented; the rest is rules the remaining items have to satisfy. [STATUS.md](STATUS.md) is the checklist.
 
 ## Secrets
 
@@ -35,7 +35,18 @@ Filling a browser form may proceed up to the point of confirmation. The confirm 
 
 ## Files
 
-Local file work stays inside a sandbox on the single host. The sandbox is not built yet. Until it exists, do not add tools that read or write the host filesystem.
+Local file work stays inside a sandbox on the single host. The boundary is implemented and described in the next section.
+
+## Sandbox boundary (implemented)
+
+Enforced by `src/loom/sandbox.py`, used by both the local in-process transport and the HTTP transport:
+
+- Path jail: every path argument is resolved inside the sandbox root; `../`, absolute paths outside the jail, and symlinks resolving outside are rejected with an error, and nothing is written.
+- Read cap: `read_file` refuses files above 1 MiB.
+- Approval gate: `write_file`, `mkdir`, `move_file`, and `delete_file` are side-effect tools and pause for a human; `list_dir` and `read_file` run without approval. Every decision and execution is audited.
+- Container (`Dockerfile` + `compose.yml`): runs as non-root uid 10001, read-only root filesystem, only the workspace volume mounted, no docker.sock, no home mounts, mem_limit 256m, cpus 0.5, no-new-privileges.
+
+Not yet: network egress restriction on the sandbox container, per-user or per-day quotas on file operations.
 
 ## What this document is
 
