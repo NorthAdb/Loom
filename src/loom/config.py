@@ -1,5 +1,6 @@
 """Settings loaded from the environment and an optional .env file."""
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -16,6 +17,21 @@ class ConfigError(ValueError):
 _DEFAULT_IMAP_PORT = 993
 _DEFAULT_MAIL_FOLDER = "Drafts"
 _DEFAULT_TIMEZONE = "Asia/Hong_Kong"
+
+# Leaf segments a drafts folder must not have: LOOM_MAIL_FOLDER points at the
+# drafts mailbox, and a wrong pick here would let draft replacement delete or
+# expunge unrelated mail. Matched case-insensitively against the last segment
+# (after "/" or "." hierarchy separators) of the configured folder.
+_FORBIDDEN_MAIL_FOLDER_LEAVES = {"inbox", "sent", "trash", "junk", "deleted"}
+
+
+def _validate_mail_folder(name: str) -> None:
+    leaf = re.split(r"[/.]", name.strip())[-1].lower()
+    if leaf in _FORBIDDEN_MAIL_FOLDER_LEAVES:
+        raise ConfigError(
+            f"LOOM_MAIL_FOLDER: {name!r} is not a drafts folder; "
+            "a drafts folder is required (e.g. Drafts or [Gmail]/Drafts)"
+        )
 
 
 class Settings(BaseSettings):
@@ -53,6 +69,12 @@ class Settings(BaseSettings):
         if value in ("", None):
             return defaults[info.field_name]
         return value
+
+    def __init__(self, *args, **values) -> None:
+        super().__init__(*args, **values)
+        # ConfigError (not a pydantic ValidationError) so doctor and chat both
+        # surface the message verbatim, like the timezone check in get_settings.
+        _validate_mail_folder(self.mail_folder)
 
 
 def _describe_errors(exc: ValidationError) -> str:

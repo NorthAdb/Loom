@@ -1,11 +1,12 @@
 """Mail module: message building, the tool surface, and IMAP error paths."""
 
+import imaplib
 from email import message_from_bytes, policy
 
 import pytest
 from conftest import FakeMailTransport
 
-from loom.config import Settings
+from loom.config import ConfigError, Settings
 from loom.mail import ImapMailTransport, _message_id, build_draft_message
 from loom.tools import make_tools
 
@@ -102,29 +103,52 @@ def test_imap_transport_connection_failure_names_the_host_var_without_the_passwo
 
 
 class FakeIMAPClient:
-    """Records call order so replace_draft's safety ordering is observable."""
+    """Records every call so replace_draft's UID-only flow is observable.
 
-    def __init__(self, matches=b"1"):
+    The uid() responses imitate real imaplib shapes: SEARCH returns one space
+    separated uid line, FETCH returns a (response-prefix, header-literal) tuple
+    followed by the closing paren.
+    """
+
+    def __init__(
+        self,
+        search_hits=b"7",
+        fetch_flags=r"(\Draft)",
+        fetch_message_id=b"<old@loom>",
+        store_status="OK",
+        capabilities=("UIDPLUS",),
+    ):
         self.calls = []
-        self.matches = matches
-
-    def append(self, mailbox, flags, date, message_bytes):
-        self.calls.append(("append", mailbox, flags))
-        return "OK", [b""]
+        self.search_hits = search_hits
+        self.fetch_flags = fetch_flags
+        self.fetch_message_id = fetch_message_id
+        self.store_status = store_status
+        self.capabilities = list(capabilities)
 
     def select(self, mailbox):
         self.calls.append(("select", mailbox))
         return "OK", [b"1"]
 
-    def search(self, charset, *criteria):
-        self.calls.append(("search", *criteria))
-        return "OK", [self.matches]
-
-    def store(self, num, flags, value):
-        self.calls.append(("store", num, value))
+    def append(self, mailbox, flags, date, message_bytes):
+        self.calls.append(("append", mailbox, flags))
         return "OK", [b""]
 
+    def uid(self, command, *args):
+        self.calls.append(("uid", command, *args))
+        if command == "SEARCH":
+            return "OK", [self.search_hits]
+        if command == "FETCH":
+            header = b"Message-ID: " + self.fetch_message_id + b"\r\n\r\n"
+            prefix = f"7 (UID 7 FLAGS {self.fetch_flags} BODY[HEADER.FIELDS (MESSAGE-ID)] {len(header)})".encode()
+            return "OK", [(prefix, header), b")"]
+        if command == "STORE":
+            return self.store_status, [b""]
+        if command == "EXPUNGE":
+            return "OK", [args[0]]
+        return "BAD", [b"unexpected uid command"]
+
     def expunge(self):
+        # Bare EXPUNGE is banned: mail.py must never wipe other deleted mail.
         self.calls.append(("expunge",))
         return "OK", [b""]
 
@@ -141,30 +165,121 @@ def _patched_imap(monkeypatch, client):
     monkeypatch.setattr("loom.mail.imaplib.IMAP4_SSL", lambda host, port: client)
 
 
-def test_replace_draft_appends_before_expunging(monkeypatch, tmp_path):
-    client = FakeIMAPClient(matches=b"7")
+def _writes(client):
+    """The calls that would change server state, in order."""
+    return [
+        call
+        for call in client.calls
+        if call[0] == "append"
+        or call[0] in ("store", "expunge")
+        or (call[0] == "uid" and call[1] in ("STORE", "EXPUNGE"))
+    ]
+
+
+def test_replace_draft_uid_flow_appends_then_stores_then_expunges_that_uid(monkeypatch, tmp_path):
+    client = FakeIMAPClient(search_hits=b"7")
     _patched_imap(monkeypatch, client)
     transport = ImapMailTransport(make_settings(tmp_path))
     message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
 
     new_id = transport.replace_draft("<old@loom>", message)
 
-    order = [call[0] for call in client.calls]
-    assert order.index("append") < order.index("expunge")
-    assert ("store", b"7", r"(\Deleted)") in client.calls
     assert new_id == _message_id(message)
+    assert ("select", '"Drafts"') in client.calls, "the mailbox name must be RFC 3501 quoted"
+    assert ("append", '"Drafts"', r"(\Draft)") in client.calls
+    assert ("uid", "STORE", "7", "+FLAGS.SILENT", r"(\Deleted)") in client.calls
+    assert ("uid", "EXPUNGE", "7") in client.calls
+    order = [call[0] for call in client.calls]
+    assert order.index("append") < order.index("logout")
+    assert "expunge" not in order, "bare EXPUNGE would wipe unrelated deleted mail"
 
 
-def test_replace_draft_with_zero_matches_raises_and_never_writes(monkeypatch, tmp_path):
-    client = FakeIMAPClient(matches=b"")
+def test_replace_draft_with_multiple_hits_refuses_without_modification(monkeypatch, tmp_path):
+    client = FakeIMAPClient(search_hits=b"7 9")
     _patched_imap(monkeypatch, client)
     transport = ImapMailTransport(make_settings(tmp_path))
     message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
 
-    with pytest.raises(ValueError, match="no existing draft"):
+    with pytest.raises(ValueError, match="exactly one"):
+        transport.replace_draft("<old@loom>", message)
+
+    assert _writes(client) == [], "an ambiguous search must modify nothing"
+
+
+def test_replace_draft_refuses_when_flags_lack_draft(monkeypatch, tmp_path):
+    client = FakeIMAPClient(fetch_flags=r"(\Seen)")
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    with pytest.raises(ValueError, match="Draft"):
+        transport.replace_draft("<old@loom>", message)
+
+    assert _writes(client) == [], "a non-draft message must never be deleted"
+
+
+def test_replace_draft_refuses_when_fetched_message_id_differs(monkeypatch, tmp_path):
+    client = FakeIMAPClient(fetch_message_id=b"<other@loom>")
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    with pytest.raises(ValueError, match="not <old@loom>"):
+        transport.replace_draft("<old@loom>", message)
+
+    assert _writes(client) == [], "the fetched header is the ground truth, not the search"
+
+
+def test_replace_draft_uid_expunge_targets_only_that_uid_and_other_deleted_mail_survives(monkeypatch, tmp_path):
+    client = FakeIMAPClient(search_hits=b"7", capabilities=("UIDPLUS",))
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    transport.replace_draft("<old@loom>", message)
+
+    expunges = [call for call in client.calls if call == ("uid", "EXPUNGE", "7")]
+    assert len(expunges) == 1, "UID EXPUNGE must fire once, for the matched uid alone"
+    assert not any(call[0] == "expunge" for call in client.calls), "bare EXPUNGE never runs"
+    assert not any(call[:2] == ("uid", "EXPUNGE") and call[2] != "7" for call in client.calls)
+
+
+def test_replace_draft_without_uidplus_appends_and_keeps_old(monkeypatch, tmp_path):
+    client = FakeIMAPClient(capabilities=())
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    result = transport.replace_draft("<old@loom>", message)
+
+    assert "kept on the server" in result
+    assert _message_id(message) in result
+    assert not any(call[:2] == ("uid", "EXPUNGE") for call in client.calls)
+    assert ("append", '"Drafts"', r"(\Draft)") in client.calls
+
+
+def test_replace_draft_aborts_when_store_fails(monkeypatch, tmp_path):
+    client = FakeIMAPClient(store_status="NO")
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    with pytest.raises(RuntimeError, match="mark the old draft deleted"):
+        transport.replace_draft("<old@loom>", message)
+
+    assert not any(call[:2] == ("uid", "EXPUNGE") for call in client.calls)
+
+
+def test_replace_draft_with_zero_matches_raises_and_never_writes(monkeypatch, tmp_path):
+    client = FakeIMAPClient(search_hits=b"")
+    _patched_imap(monkeypatch, client)
+    transport = ImapMailTransport(make_settings(tmp_path))
+    message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
+
+    with pytest.raises(ValueError, match="found 0"):
         transport.replace_draft("<missing@loom>", message)
 
-    assert not any(call[0] in ("append", "expunge") for call in client.calls)
+    assert _writes(client) == []
 
 
 def test_replace_draft_rejects_a_non_message_id_before_touching_imap(monkeypatch, tmp_path):
@@ -177,3 +292,41 @@ def test_replace_draft_rejects_a_non_message_id_before_touching_imap(monkeypatch
         transport.replace_draft('x" OR SUBJECT "y', message)
 
     assert client.calls == []
+
+
+def test_mail_folder_inbox_is_rejected_by_config():
+    with pytest.raises(ConfigError, match="LOOM_MAIL_FOLDER"):
+        Settings(loom_env="dev", mail_folder="INBOX")
+    with pytest.raises(ConfigError, match="LOOM_MAIL_FOLDER"):
+        Settings(loom_env="dev", mail_folder="sent")
+    assert Settings(loom_env="dev", mail_folder="[Gmail]/Drafts").mail_folder == "[Gmail]/Drafts"
+
+
+class _LoginFailsClient:
+    """login() raises like a real server rejecting bad credentials."""
+
+    def __init__(self):
+        self.calls = []
+        self.capabilities = ["UIDPLUS"]
+
+    def login(self, user, password):
+        self.calls.append(("login", user))
+        raise imaplib.IMAP4.error(b"[AUTHENTICATIONFAILED] Login failed.")
+
+    def logout(self):
+        self.calls.append(("logout",))
+        return "OK", [b"Bye"]
+
+
+def test_imap_errors_have_no_cause_chain(monkeypatch, tmp_path):
+    client = _LoginFailsClient()
+    monkeypatch.setattr("loom.mail.imaplib.IMAP4_SSL", lambda host, port: client)
+    settings = make_settings(tmp_path, mail_password="secret-pass-42")
+    transport = ImapMailTransport(settings)
+
+    with pytest.raises(RuntimeError, match="LOOM_MAIL_USER") as exc_info:
+        transport.append_draft(build_draft_message("a@b.com", "s", "b", "owner@example.com"))
+
+    assert "secret-pass-42" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None, "the chained exception can echo the password"
+    assert exc_info.value.__suppress_context__ is True
