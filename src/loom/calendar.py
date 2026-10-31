@@ -6,6 +6,7 @@ instead of failing the whole feed. There is no create, update, or delete
 anything in this module: the only network call is a GET of the feed.
 """
 
+import ipaddress
 import logging
 import urllib.request
 from datetime import UTC, date, datetime, time, timedelta
@@ -54,7 +55,14 @@ def redact_url(url: str) -> str:
 
 
 def _is_loopback(host: str) -> bool:
-    return host == "localhost" or host == "::1" or host.startswith("127.")
+    # A prefix match would admit hosts like "127.0.0.1.nip.io", which resolve
+    # far from the machine; only a parsed loopback address is trusted.
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 class _HTTPSOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):

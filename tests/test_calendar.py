@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from conftest import CALENDAR_ICS, FakeCalendarTransport
 
-from loom.calendar import HttpCalendarTransport, parse_events, summarize
+from loom.calendar import HttpCalendarTransport, _is_loopback, parse_events, summarize
 from loom.config import Settings
 from loom.tools import make_tools
 
@@ -163,6 +163,33 @@ def test_fetch_ics_error_has_no_cause_chain():
     ["file:///etc/ics.ics", "http://example.com/private-cbd8f2basic.ics"],
 )
 def test_fetch_ics_rejects_non_https(url):
+    transport = HttpCalendarTransport(url, timeout=2)
+
+    with pytest.raises(RuntimeError, match="calendar feed fetch failed.*ValueError"):
+        transport.fetch_ics()
+
+
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("localhost", True),
+        ("127.0.0.1", True),
+        ("::1", True),
+        ("127.evil.invalid", False),
+        ("127.0.0.1.nip.io", False),
+        ("example.com", False),
+        ("", False),
+    ],
+)
+def test_is_loopback_accepts_only_parseable_loopback_addresses(host, expected):
+    assert _is_loopback(host) is expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://127.0.0.1.nip.io/private.ics", "http://127.evil.invalid/x.ics"],
+)
+def test_fetch_ics_rejects_lookalike_loopback_hosts(url):
     transport = HttpCalendarTransport(url, timeout=2)
 
     with pytest.raises(RuntimeError, match="calendar feed fetch failed.*ValueError"):
