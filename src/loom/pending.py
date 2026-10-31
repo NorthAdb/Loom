@@ -7,13 +7,14 @@ with `loom approvals approve|reject`. Records live in
 """
 
 import json
+import threading
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from loom.routines import write_json_atomic
 
 PENDING = "pending"
-COMPLETED = "completed"  # approved/rejected also settle to completed; the decision lives in the audit log
+COMPLETED = "completed"  # every resolved record lands here; the approve/reject decision lives in the audit log
 
 
 @dataclass(frozen=True)
@@ -26,14 +27,18 @@ class PendingApproval:
     tools: list  # interrupt payload entries: {"name": ..., "args": ...}
     reason: str
     created_at: str
-    status: str  # "pending" | "approved" | "rejected" | "completed"
+    status: str  # "pending" | "completed"; the approve/reject decision lives in the audit log
 
 
 class PendingStore:
-    """CRUD over `<data dir>/approvals/pending.json`; no audit here, the gate node audits decisions."""
+    """CRUD over `<data dir>/approvals/pending.json`; no audit here, the gate node audits decisions.
+
+    Writes are serialized per process; run one worker per data dir (see README).
+    """
 
     def __init__(self, data_dir: Path) -> None:
         self._path = Path(data_dir) / "approvals" / "pending.json"
+        self._lock = threading.Lock()
 
     def _load(self) -> list[PendingApproval]:
         if not self._path.exists():
@@ -43,9 +48,10 @@ class PendingStore:
 
     def add(self, record: PendingApproval) -> PendingApproval:
         """Persist one new pending record and return it."""
-        records = self._load()
-        records.append(record)
-        self._write(records)
+        with self._lock:
+            records = self._load()
+            records.append(record)
+            self._write(records)
         return record
 
     def list_pending(self) -> list[PendingApproval]:
@@ -60,13 +66,14 @@ class PendingStore:
 
     def set_status(self, pending_id: str, status: str, tools: list | None = None) -> PendingApproval:
         """Move one record to a new status; `tools` refreshes the payload when a resumed run re-pends."""
-        records = self._load()
-        for index, record in enumerate(records):
-            if record.pending_id == pending_id:
-                updated = replace(record, status=status, tools=record.tools if tools is None else tools)
-                records[index] = updated
-                self._write(records)
-                return updated
+        with self._lock:
+            records = self._load()
+            for index, record in enumerate(records):
+                if record.pending_id == pending_id:
+                    updated = replace(record, status=status, tools=record.tools if tools is None else tools)
+                    records[index] = updated
+                    self._write(records)
+                    return updated
         raise KeyError(f"no such pending approval: {pending_id!r}")
 
     def _write(self, records: list[PendingApproval]) -> None:

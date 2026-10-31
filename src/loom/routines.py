@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -42,11 +43,15 @@ def write_json_atomic(path: Path, payload: Any) -> None:
 
 
 class RoutineStore:
-    """CRUD over `<data dir>/routines.json`; add and remove write one audit record each."""
+    """CRUD over `<data dir>/routines.json`; add and remove write one audit record each.
+
+    Writes are serialized per process; run one worker per data dir (see README).
+    """
 
     def __init__(self, data_dir: Path) -> None:
         self._path = Path(data_dir) / "routines.json"
         self._audit = AuditLog(data_dir)
+        self._lock = threading.Lock()
 
     def load(self) -> list[Routine]:
         """Return every stored routine; an absent file means an empty list."""
@@ -54,10 +59,6 @@ class RoutineStore:
             return []
         items = json.loads(self._path.read_text(encoding="utf-8"))
         return [Routine(**item) for item in items]
-
-    def list(self) -> list[Routine]:
-        """Alias for load(), matching the CLI verb."""
-        return self.load()
 
     def get(self, routine_id: str) -> Routine:
         for routine in self.load():
@@ -67,15 +68,16 @@ class RoutineStore:
 
     def add(self, routine: Routine) -> Routine:
         """Validate and persist a new routine; rejects duplicate ids and unparseable crons."""
-        if any(existing.id == routine.id for existing in self.load()):
-            raise ValueError(f"routine id already exists: {routine.id!r}")
-        try:
-            CronTrigger.from_crontab(routine.cron)
-        except ValueError as exc:
-            raise ValueError(f"routine.cron is not a valid 5-field crontab: {routine.cron!r} ({exc})") from exc
-        routines = self.load()
-        routines.append(routine)
-        self._write(routines)
+        with self._lock:
+            if any(existing.id == routine.id for existing in self.load()):
+                raise ValueError(f"routine id already exists: {routine.id!r}")
+            try:
+                CronTrigger.from_crontab(routine.cron)
+            except ValueError as exc:
+                raise ValueError(f"routine.cron is not a valid 5-field crontab: {routine.cron!r} ({exc})") from exc
+            routines = self.load()
+            routines.append(routine)
+            self._write(routines)
         self._audit.append(
             run_id="-",
             actor="human",
@@ -87,8 +89,9 @@ class RoutineStore:
 
     def remove(self, routine_id: str) -> Routine:
         """Delete one routine by id; unknown ids raise KeyError."""
-        removed = self.get(routine_id)
-        self._write([routine for routine in self.load() if routine.id != routine_id])
+        with self._lock:
+            removed = self.get(routine_id)
+            self._write([routine for routine in self.load() if routine.id != routine_id])
         self._audit.append(
             run_id="-",
             actor="human",
@@ -100,13 +103,14 @@ class RoutineStore:
 
     def set_status(self, routine_id: str, last_run_at: str, last_status: str) -> Routine:
         """Runner bookkeeping: record when the routine last fired and how it ended."""
-        routines = self.load()
-        for index, routine in enumerate(routines):
-            if routine.id == routine_id:
-                updated = replace(routine, last_run_at=last_run_at, last_status=last_status)
-                routines[index] = updated
-                self._write(routines)
-                return updated
+        with self._lock:
+            routines = self.load()
+            for index, routine in enumerate(routines):
+                if routine.id == routine_id:
+                    updated = replace(routine, last_run_at=last_run_at, last_status=last_status)
+                    routines[index] = updated
+                    self._write(routines)
+                    return updated
         raise KeyError(f"no such routine: {routine_id!r}")
 
     def _write(self, routines: list[Routine]) -> None:

@@ -20,7 +20,7 @@ from langgraph.types import Command
 import loom
 from loom.config import ConfigError, Settings, get_settings
 from loom.logging import set_run_id, setup_logging
-from loom.pending import PendingStore
+from loom.pending import PENDING, PendingStore
 from loom.routines import Routine, RoutineStore
 from loom.runner import resume_pending, run_routine
 from loom.runtime import open_graph
@@ -173,7 +173,7 @@ def _routines_add(args: argparse.Namespace) -> int:
 
 def _routines_list(args: argparse.Namespace) -> int:
     settings = get_settings()
-    routines = RoutineStore(settings.loom_data_dir).list()
+    routines = RoutineStore(settings.loom_data_dir).load()
     if not routines:
         print("(none)")
         return 0
@@ -203,18 +203,17 @@ def _routines_run(args: argparse.Namespace) -> int:
     except KeyError as exc:
         print(f"error: {exc.args[0]}")
         return 1
-    details: dict = {}
     try:
-        outcome = run_routine(routine, settings, store, pending, details=details)
+        outcome = run_routine(routine, settings, store, pending)
     except (ConfigError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}")
         return 1
-    print(f"thread {details['thread_id']}")
-    if outcome == "pending":
-        pending_id = details["pending_id"]
-        print(f"waiting for approval: {pending_id}")
-        print(f"resolve with: loom approvals approve {pending_id}  or  loom approvals reject {pending_id}")
+    print(f"thread {outcome.thread_id}")
+    if outcome.outcome == PENDING:
+        print(f"waiting for approval: {outcome.pending_id}")
+        print(f"resolve with: loom approvals approve {outcome.pending_id}  or  loom approvals reject {outcome.pending_id}")
     else:
+        print(outcome.answer)
         print("completed")
     return 0
 
@@ -236,15 +235,15 @@ def _approvals_decide(args: argparse.Namespace, decision: str) -> int:
     setup_logging(settings)
     pending = PendingStore(settings.loom_data_dir)
     try:
-        answer = resume_pending(args.pending_id, decision, settings, pending)
+        outcome = resume_pending(args.pending_id, decision, settings, pending)
     except (ConfigError, KeyError, RuntimeError, ValueError) as exc:
         print(f"error: {exc.args[0] if isinstance(exc, KeyError) else exc}")
         return 1
-    if answer == "pending":
+    if outcome.outcome == PENDING:
         print("still pending: the run asked for approval of further side effects")
         print(f"resolve with: loom approvals approve {args.pending_id}  or  loom approvals reject {args.pending_id}")
     else:
-        print(answer)
+        print(outcome.answer)
     return 0
 
 
@@ -253,7 +252,7 @@ def _worker(args: argparse.Namespace) -> int:
     setup_logging(settings)
     store = RoutineStore(settings.loom_data_dir)
     pending = PendingStore(settings.loom_data_dir)
-    routines = [routine for routine in store.list() if routine.enabled]
+    routines = [routine for routine in store.load() if routine.enabled]
     scheduler = BackgroundScheduler()
     for routine in routines:
         scheduler.add_job(

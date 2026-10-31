@@ -35,18 +35,17 @@ def test_read_only_routine_completes_and_audits_the_trigger(monkeypatch, tmp_pat
     monkeypatch.setattr(
         loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="10 files total")]))
     )
-    details = {}
 
-    outcome = run_routine(routine, settings, store, pending, details=details)
+    outcome = run_routine(routine, settings, store, pending)
 
-    assert outcome == "completed"
-    assert details["thread_id"].startswith("routine:daily_stats:")
-    assert "pending_id" not in details
+    assert outcome.outcome == "completed"
+    assert outcome.thread_id.startswith("routine:daily_stats:")
+    assert not outcome.pending_id
     triggered = trigger_records(tmp_path)
     assert len(triggered) == 1
     assert (triggered[0]["actor"], triggered[0]["decision"]) == ("routine", "triggered")
     args = json.loads(triggered[0]["args"])
-    assert args == {"routine_id": "daily_stats", "thread_id": details["thread_id"]}
+    assert args == {"routine_id": "daily_stats", "thread_id": outcome.thread_id}
     stored = store.get("daily_stats")
     assert stored.last_status == "completed"
     assert stored.last_run_at
@@ -62,21 +61,20 @@ def test_write_routine_pends_and_writes_nothing(monkeypatch, tmp_path):
             messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"}), AIMessage(content="written")])
         ),
     )
-    details = {}
 
-    outcome = run_routine(routine, settings, store, pending, details=details)
+    outcome = run_routine(routine, settings, store, pending)
 
-    assert outcome == "pending"
+    assert outcome.outcome == "pending"
     assert not (tmp_path / "sandbox" / "todo.md").exists()
     waiting = pending.list_pending()
     assert len(waiting) == 1
     record = waiting[0]
     assert record.routine_id == "daily_tidy"
-    assert record.thread_id == details["thread_id"]
+    assert record.thread_id == outcome.thread_id
     assert record.status == "pending"
     assert record.tools[0]["name"] == "write_file"
     assert record.reason
-    assert record.pending_id == details["pending_id"]
+    assert record.pending_id == outcome.pending_id
     assert store.get("daily_tidy").last_status == "pending"
 
 
@@ -91,15 +89,15 @@ def test_approve_resume_over_a_fresh_graph_executes(monkeypatch, tmp_path):
             messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"})])
         ),
     )
-    details = {}
-    assert run_routine(routine, settings, store, pending, details=details) == "pending"
-    pending_id = details["pending_id"]
+    outcome = run_routine(routine, settings, store, pending)
+    assert outcome.outcome == "pending"
+    pending_id = outcome.pending_id
 
     # A separate scripted model proves the resumed run does not reuse the first graph's model.
     monkeypatch.setattr(
         loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="file written")]))
     )
-    answer = resume_pending(pending_id, "approve", settings, pending)
+    answer = resume_pending(pending_id, "approve", settings, pending).answer
 
     assert answer == "file written"
     assert (tmp_path / "sandbox" / "todo.md").read_text(encoding="utf-8") == "hi"
@@ -122,18 +120,18 @@ def test_reject_resume_executes_nothing(monkeypatch, tmp_path):
             messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"})])
         ),
     )
-    details = {}
-    assert run_routine(routine, settings, store, pending, details=details) == "pending"
+    outcome = run_routine(routine, settings, store, pending)
+    assert outcome.outcome == "pending"
 
     monkeypatch.setattr(loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([])))
-    answer = resume_pending(details["pending_id"], "reject", settings, pending)
+    answer = resume_pending(outcome.pending_id, "reject", settings, pending).answer
 
     assert "rejected" in answer
     assert not (tmp_path / "sandbox" / "todo.md").exists()
     decisions = [(record["tool"], record["decision"]) for record in read_audit(tmp_path)]
     assert ("write_file", "rejected") in decisions
     assert ("write_file", "executed") not in decisions
-    assert pending.get(details["pending_id"]).status == "completed"
+    assert pending.get(outcome.pending_id).status == "completed"
 
 
 def test_resumed_run_that_hits_the_gate_again_stays_pending(monkeypatch, tmp_path):
@@ -146,9 +144,9 @@ def test_resumed_run_that_hits_the_gate_again_stays_pending(monkeypatch, tmp_pat
             messages=iter([tool_call_msg("write_file", {"path": "a.txt", "content": "one"}, "call_a")])
         ),
     )
-    details = {}
-    assert run_routine(routine, settings, store, pending, details=details) == "pending"
-    pending_id = details["pending_id"]
+    outcome = run_routine(routine, settings, store, pending)
+    assert outcome.outcome == "pending"
+    pending_id = outcome.pending_id
 
     monkeypatch.setattr(
         loom.runtime,
@@ -159,7 +157,7 @@ def test_resumed_run_that_hits_the_gate_again_stays_pending(monkeypatch, tmp_pat
     )
     again = resume_pending(pending_id, "approve", settings, pending)
 
-    assert again == "pending"
+    assert again.outcome == "pending"
     assert (tmp_path / "sandbox" / "a.txt").exists()
     assert not (tmp_path / "sandbox" / "b.txt").exists()
     record = pending.get(pending_id)
@@ -170,7 +168,7 @@ def test_resumed_run_that_hits_the_gate_again_stays_pending(monkeypatch, tmp_pat
     monkeypatch.setattr(
         loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="done two")]))
     )
-    answer = resume_pending(pending_id, "approve", settings, pending)
+    answer = resume_pending(pending_id, "approve", settings, pending).answer
 
     assert answer == "done two"
     assert (tmp_path / "sandbox" / "b.txt").exists()
@@ -198,13 +196,13 @@ def test_double_resume_raises_already(monkeypatch, tmp_path):
             messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"})])
         ),
     )
-    details = {}
-    assert run_routine(routine, settings, store, pending, details=details) == "pending"
-    pending_id = details["pending_id"]
+    outcome = run_routine(routine, settings, store, pending)
+    assert outcome.outcome == "pending"
+    pending_id = outcome.pending_id
     monkeypatch.setattr(
         loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="file written")]))
     )
-    assert resume_pending(pending_id, "approve", settings, pending) == "file written"
+    assert resume_pending(pending_id, "approve", settings, pending).answer == "file written"
 
     try:
         resume_pending(pending_id, "approve", settings, pending)

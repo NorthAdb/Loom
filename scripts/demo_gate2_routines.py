@@ -69,22 +69,21 @@ def scenario_stats(settings: Settings, store: RoutineStore) -> str:
         )
     )
     graph = build_graph(scripted, settings)
-    details: dict = {}
-    outcome = run_routine(store.get("daily_sandbox_stats"), settings, store, pending, graph=graph, details=details)
+    outcome = run_routine(store.get("daily_sandbox_stats"), settings, store, pending, graph=graph)
 
-    print(f"stats answer: {details.get('answer')}")
+    print(f"stats answer: {outcome.answer}")
     triggered = [record for record in audit_records(settings.loom_data_dir) if record["tool"] == "routine_trigger"]
     for record in triggered:
         print(f"  audit: {json.dumps(record, ensure_ascii=False)}")
 
     ok = (
-        outcome == "completed"
+        outcome.outcome == "completed"
         and len(triggered) == 1
-        and details.get("thread_id", "").startswith("routine:daily_sandbox_stats:")
+        and outcome.thread_id.startswith("routine:daily_sandbox_stats:")
         and store.get("daily_sandbox_stats").last_status == "completed"
         and pending.list_pending() == []
     )
-    return "PASS" if ok else f"FAIL (outcome={outcome}, triggered={len(triggered)})"
+    return "PASS" if ok else f"FAIL (outcome={outcome.outcome}, triggered={len(triggered)})"
 
 
 def scenario_tidy(settings: Settings, store: RoutineStore) -> str:
@@ -110,10 +109,9 @@ def scenario_tidy(settings: Settings, store: RoutineStore) -> str:
         )
     )
     graph = build_graph(tidy_model, settings)
-    details: dict = {}
-    outcome = run_routine(store.get("daily_tidy"), settings, store, pending, graph=graph, details=details)
-    pending_id = details.get("pending_id", "")
-    print(f"tidy run outcome: {outcome}, pending_id: {pending_id}")
+    outcome = run_routine(store.get("daily_tidy"), settings, store, pending, graph=graph)
+    pending_id = outcome.pending_id
+    print(f"tidy run outcome: {outcome.outcome}, pending_id: {pending_id}")
     record = pending.get(pending_id) if pending_id else None
     print(f"pending tools: {len(record.tools) if record else 0} x move_file, reason: {record.reason if record else '-'}")
 
@@ -121,7 +119,7 @@ def scenario_tidy(settings: Settings, store: RoutineStore) -> str:
     print("approvals list output:")
     assert loom.cli.main(["approvals", "list"]) == 0
 
-    # The scripted model replays the final answer when the approval CLI resumes the same thread.
+    # The resumed run opens a fresh graph, so the patch must return the same tidy_model instance.
     loom.runtime.make_model = lambda settings: tidy_model
     approved = loom.cli.main(["approvals", "approve", pending_id]) == 0
     print(f"approve exit ok: {approved}")
@@ -136,7 +134,7 @@ def scenario_tidy(settings: Settings, store: RoutineStore) -> str:
     approved_count = sum(1 for rec in moves if rec["decision"] == "approved")
     executed_count = sum(1 for rec in moves if rec["decision"] == "executed")
     ok = (
-        outcome == "pending"
+        outcome.outcome == "pending"
         and blocked
         and record is not None and len(record.tools) == len(MESSY)
         and approved
@@ -148,7 +146,7 @@ def scenario_tidy(settings: Settings, store: RoutineStore) -> str:
     )
     if not ok:
         return (
-            f"FAIL (outcome={outcome}, blocked={blocked}, approved={approved}, placed={placed}, "
+            f"FAIL (outcome={outcome.outcome}, blocked={blocked}, approved={approved}, placed={placed}, "
             f"contents_kept={contents_kept}, no_leftovers={no_leftovers}, "
             f"audit approved={approved_count}, executed={executed_count})"
         )
@@ -164,7 +162,7 @@ def main() -> int:
     data_dir = root / "data"
     sandbox_root = root / "sandbox"
     shutil.copytree(FIXTURES, sandbox_root)
-    # The approval CLI reads settings from the environment, so point it at this run's dirs.
+    # The approval CLI reads its settings from the environment, like any other loom process.
     os.environ["LOOM_ENV"] = "dev"
     os.environ["LOOM_DATA_DIR"] = str(data_dir)
     os.environ["LOOM_SANDBOX_ROOT"] = str(sandbox_root)
@@ -188,7 +186,7 @@ def main() -> int:
             prompt="Tidy the sandbox: move every file into sorted/<extension>/.",
         )
     )
-    print(f"registered routines: {', '.join(r.id for r in store.list())}")
+    print(f"registered routines: {', '.join(r.id for r in store.load())}")
     print_tree(sandbox_root, "BEFORE routines:")
 
     results = []

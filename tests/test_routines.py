@@ -16,7 +16,7 @@ def test_store_round_trip_in_tmp_path(tmp_path):
     first = store.add(make_routine())
     second = store.add(make_routine(routine_id="daily_tidy", name="Daily tidy", cron="0 9 * * *"))
 
-    reloaded = RoutineStore(tmp_path).list()
+    reloaded = RoutineStore(tmp_path).load()
 
     assert reloaded == [first, second]
     assert reloaded[0].enabled is True
@@ -34,7 +34,7 @@ def test_duplicate_id_rejected(tmp_path):
         assert "daily_stats" in str(exc)
     else:
         raise AssertionError("duplicate id was accepted")
-    assert len(store.list()) == 1
+    assert len(store.load()) == 1
 
 
 def test_bad_cron_rejected_with_cron_string_in_message(tmp_path):
@@ -55,7 +55,7 @@ def test_bad_cron_rejected_with_cron_string_in_message(tmp_path):
         assert "* * * *" in str(exc)
     else:
         raise AssertionError("four-field cron was accepted")
-    assert store.list() == []
+    assert store.load() == []
 
 
 def test_mutations_write_audit_records(tmp_path):

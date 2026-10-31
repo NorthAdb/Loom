@@ -45,7 +45,7 @@ def test_routines_add_list_remove_through_the_cli(monkeypatch, tmp_path, capsys)
     assert "enabled=true" in listed
 
     assert loom.cli.main(["routines", "remove", "daily_stats"]) == 0
-    assert RoutineStore(tmp_path).list() == []
+    assert RoutineStore(tmp_path).load() == []
     assert "removed routine daily_stats" in capsys.readouterr().out
 
 
@@ -66,7 +66,7 @@ def test_routines_add_rejects_duplicate_and_bad_cron_with_nonzero_exit(monkeypat
     ]) == 1
     out = capsys.readouterr().out
     assert "99 99 * * *" in out
-    assert [routine.id for routine in RoutineStore(tmp_path).list()] == ["daily_tidy"]
+    assert [routine.id for routine in RoutineStore(tmp_path).load()] == ["daily_tidy"]
 
 
 def test_read_only_run_prints_thread_and_completed(monkeypatch, tmp_path, capsys):
