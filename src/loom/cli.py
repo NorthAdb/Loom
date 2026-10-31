@@ -11,14 +11,12 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
 import loom
 from loom.config import ConfigError, Settings, get_settings
-from loom.graph import build_graph
-from loom.llm import make_model
 from loom.logging import set_run_id, setup_logging
+from loom.runtime import open_graph
 
 logger = logging.getLogger("loom")
 
@@ -134,11 +132,7 @@ def chat_session(graph, thread_id: str, read: Callable[[str], str], emit: Callab
 def _chat(thread_id: str | None, read: Callable[[str], str] = input, emit: Callable[[str], None] = print) -> int:
     settings = get_settings()
     setup_logging(settings)
-    model = make_model(settings)
-    ckpt_dir = Path(settings.loom_data_dir) / "checkpoints"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    with SqliteSaver.from_conn_string(ckpt_dir / "threads.sqlite") as checkpointer:
-        graph = build_graph(model, settings, checkpointer)
+    with open_graph(settings) as graph:
         session_id = thread_id or uuid.uuid4().hex
         emit(f"thread {session_id}")
         emit("type a message; side-effect tools pause for approve/reject; 'quit' exits")
