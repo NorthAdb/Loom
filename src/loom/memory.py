@@ -41,7 +41,11 @@ _SECRET_WORD = re.compile(r"key|token|secret|password", re.IGNORECASE)
 
 _HIGH_ENTROPY_TOKEN = re.compile("[A-Za-z0-9+/=_.-]{16,}")
 _HIGH_ENTROPY_BITS = 3.25
-_PASSWORD_SHAPE = re.compile(r"\b(?:password|passwd|pwd)\b\s*[:=]?\s*\S", re.IGNORECASE)
+# Words in plain casing (lower/upper/title) are prose, not tokens; anything
+# else a shape captures is treated as a value worth refusing.
+_UUID_OR_HEX = "0123456789abcdefABCDEF-"
+_URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
+_PASSWORD_SHAPE = re.compile(r"\b(?:password|passwd|pwd)\b\s*[:=]?\s*(\S+)", re.IGNORECASE)
 
 
 def _shannon_entropy(text: str) -> float:
@@ -52,18 +56,28 @@ def _shannon_entropy(text: str) -> float:
     return -sum((count / length) * math.log2(count / length) for count in Counter(text).values())
 
 
+def _is_plain_word(run: str) -> bool:
+    """Whether this run is a naturally cased word (lower, upper, or title)."""
+    return run.isalpha() and (run.islower() or run.isupper() or run.istitle())
+
+
 def looks_like_secret_value(value: str) -> bool:
     """Report whether a facts value carries a secret beyond the chat guard's shapes.
 
     Refuses any token-shaped run of >= 16 ASCII characters (base64/hex/alnum
     shapes) whose Shannon entropy is >= 3.25 bits/char, and any
-    "password xxx" / "passwd: xxx" / "pwd=xxx" shape at any length. CJK prose
-    never forms these runs and always passes.
+    "password xxx" / "passwd: xxx" / "pwd=xxx" shape whose captured value is
+    not a plainly cased word. Plain words, UUID/hex-dash shapes, and URLs
+    (stripped before scanning: their long path slugs are just addresses)
+    never refuse. CJK prose never forms these runs and always passes.
     """
-    for run in _HIGH_ENTROPY_TOKEN.findall(value):
+    text = _URL.sub(" ", value)
+    for run in _HIGH_ENTROPY_TOKEN.findall(text):
+        if _is_plain_word(run) or all(ch in _UUID_OR_HEX for ch in run):
+            continue
         if _shannon_entropy(run) >= _HIGH_ENTROPY_BITS:
             return True
-    return bool(_PASSWORD_SHAPE.search(value))
+    return any(not _is_plain_word(match.group(1)) for match in _PASSWORD_SHAPE.finditer(text))
 
 
 def has_explicit_memory_intent(text: str) -> bool:

@@ -172,9 +172,24 @@ def test_facts_value_guard_refuses_secret_shapes(tmp_path, value):
         "prefers short replies with headers",
         "reply_language 中文",
         "always summarize the week on Monday mornings",
+        "https://example.com/docs/getting-started/install",
+        "书签 https://zh.wikipedia.org/wiki/知识管理 很有用",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "straightforwardness",
+        "I forgot my password yesterday",
+        "(uuid 550e8400-e29b-41d4-a716-446655440000 in the notes)",
     ],
 )
 def test_facts_value_guard_passes_benign_values(tmp_path, value):
     stored = FactsStore(tmp_path).upsert("note", value)
 
     assert stored.value == value
+
+
+def test_facts_store_round_trips_a_sentence_mentioning_password(tmp_path):
+    store = FactsStore(tmp_path)
+
+    stored = store.upsert("note", "I forgot my password yesterday")
+
+    assert store.get("note") == stored
+    assert stored.value == "I forgot my password yesterday"
