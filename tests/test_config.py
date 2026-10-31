@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from loom.config import ConfigError, get_settings
+from loom.config import ConfigError, Settings, get_settings
 
 
 def test_loads_from_environment(monkeypatch):
@@ -70,3 +70,21 @@ def test_unknown_timezone_names_loom_timezone(monkeypatch):
 
     with pytest.raises(ConfigError, match="LOOM_TIMEZONE"):
         get_settings()
+
+
+@pytest.mark.parametrize(
+    "folder",
+    [
+        "Drafts\r\nEXPUNGE\r\n",
+        "Drafts\n",
+        "Draft\x00s",
+        "Dra\tfts",
+    ],
+)
+def test_mail_folder_rejects_control_characters(folder):
+    with pytest.raises(ConfigError, match="LOOM_MAIL_FOLDER.*control characters"):
+        Settings(loom_env="dev", mail_folder=folder)
+
+
+def test_mail_folder_accepts_non_ascii_names():
+    assert Settings(loom_env="dev", mail_folder="草稿").mail_folder == "草稿"

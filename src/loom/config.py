@@ -26,6 +26,13 @@ _FORBIDDEN_MAIL_FOLDER_LEAVES = {"inbox", "sent", "trash", "junk", "deleted"}
 
 
 def _validate_mail_folder(name: str) -> None:
+    # A control character (CR/LF/NUL/TAB/DEL) inside a mailbox name could
+    # terminate it early and inject an IMAP command, so reject it outright.
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+        raise ConfigError(
+            f"LOOM_MAIL_FOLDER: {name!r} must not contain control characters "
+            "(a control character in a mailbox name could inject an IMAP command)"
+        )
     leaf = re.split(r"[/.]", name.strip())[-1].lower()
     if leaf in _FORBIDDEN_MAIL_FOLDER_LEAVES:
         raise ConfigError(
