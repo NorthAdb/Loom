@@ -2,7 +2,7 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-10-31 (Phase 2 sandbox merged; Phase 3 routines in; Gate 1 materials: Phase 0 + Phase 1 merged).
+Last updated: 2026-10-31 (Gate 2 materials: Phase 0-3 merged).
 
 ## Done
 
