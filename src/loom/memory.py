@@ -9,10 +9,12 @@ labeled authoritative; Mem0 results after, labeled reference; on conflict the
 table wins.
 """
 
+import math
 import os
 import re
 import sqlite3
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -36,6 +38,32 @@ _EXPLICIT_PATTERNS = (
 _SECRET_PREFIXES = ("sk-", "pk_", "ghp_", "akia", "xox")
 _LONG_TOKEN = re.compile(r"[A-Za-z0-9_-]{24,}")
 _SECRET_WORD = re.compile(r"key|token|secret|password", re.IGNORECASE)
+
+_HIGH_ENTROPY_TOKEN = re.compile("[A-Za-z0-9+/=_.-]{16,}")
+_HIGH_ENTROPY_BITS = 3.25
+_PASSWORD_SHAPE = re.compile(r"\b(?:password|passwd|pwd)\b\s*[:=]?\s*\S", re.IGNORECASE)
+
+
+def _shannon_entropy(text: str) -> float:
+    """Bits of information per character of this exact string."""
+    if not text:
+        return 0.0
+    length = len(text)
+    return -sum((count / length) * math.log2(count / length) for count in Counter(text).values())
+
+
+def looks_like_secret_value(value: str) -> bool:
+    """Report whether a facts value carries a secret beyond the chat guard's shapes.
+
+    Refuses any token-shaped run of >= 16 ASCII characters (base64/hex/alnum
+    shapes) whose Shannon entropy is >= 3.25 bits/char, and any
+    "password xxx" / "passwd: xxx" / "pwd=xxx" shape at any length. CJK prose
+    never forms these runs and always passes.
+    """
+    for run in _HIGH_ENTROPY_TOKEN.findall(value):
+        if _shannon_entropy(run) >= _HIGH_ENTROPY_BITS:
+            return True
+    return bool(_PASSWORD_SHAPE.search(value))
 
 
 def has_explicit_memory_intent(text: str) -> bool:
@@ -92,6 +120,8 @@ class FactsStore:
             raise ValueError(f"refusing to store fact: key {key!r} looks like it carries a secret")
         if contains_secret(f"{key} {value}"):
             raise ValueError(f"refusing to store fact: value for {key!r} looks like an API key or token")
+        if looks_like_secret_value(value):
+            raise ValueError(f"refusing to store fact: value for {key!r} looks like it carries a secret")
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO facts (id, key, value, source, updated_at, confidence) "

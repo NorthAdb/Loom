@@ -24,7 +24,7 @@ Product boundaries and the 2026-10-30 decisions live in [docs/VISION.md](docs/VI
 
 ## Architecture
 
-The LangGraph loop and the sandbox layer are built; the memory layer and MCP are not. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
+The LangGraph loop, the sandbox layer, and the memory layer are built; MCP is not. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
 
 ```text
 person / scheduler
@@ -143,9 +143,9 @@ Configuration (all in `.env`; a variable left empty disables that feature):
 | `LOOM_MAIL_FOLDER` | Folder drafts are appended to | `Drafts` |
 | `LOOM_TIMEZONE` | IANA timezone for calendar windows and summaries | `Asia/Hong_Kong` |
 
-**Calendar (read-only).** Paste the calendar's ICS feed URL as `LOOM_ICAL_URL`. Google Calendar: calendar Settings → "Integrate calendar" → copy the **secret address in iCal format**. Outlook.com: calendar → Share → publish, then copy the ICS link. Google 日历：设置 → 集成日历 → 复制 "iCal 格式的 secret 地址"；Outlook：共享 → 发布日历 → 复制 ICS 链接。The feed is fetched read-only and summarized in `LOOM_TIMEZONE`.
+**Calendar (read-only).** Paste the calendar's ICS feed URL as `LOOM_ICAL_URL`. Google Calendar: calendar Settings → "Integrate calendar" → copy the **secret address in iCal format**. Outlook.com: calendar → Share → publish, then copy the ICS link. Google 日历：设置 → 集成日历 → 复制 "iCal 格式的 secret 地址"；Outlook：共享 → 发布日历 → 复制 ICS 链接。The feed is fetched read-only and summarized in `LOOM_TIMEZONE`. The URL must be **https** (plain http is accepted only for `127.0.0.1`/`localhost`, which local demos use); responses are capped at 1 MiB and redirects that leave https are refused — these feed URLs carry a private token, so it is never sent over the network in the clear nor echoed in error messages. 订阅地址必须是 https（仅 127.0.0.1/localhost 允许 http，供本地演示），响应上限 1 MiB，离开 https 的重定向会被拒绝；出错信息只显示协议与主机，不回显含令牌的原始地址。
 
-**Mail drafts (IMAP).** Use an app password, not your login password. Gmail: enable 2-Step Verification, then create an app password (Google Account → Security → App passwords) and set `LOOM_IMAP_HOST=imap.gmail.com`. A draft is appended with the `\Draft` flag to `LOOM_MAIL_FOLDER` (`[Gmail]/Drafts` on Gmail); the From address is `LOOM_MAIL_USER`. Gmail 需要 2FA + 应用专用密码，主机填 `imap.gmail.com`，草稿夹用 `[Gmail]/Drafts`。
+**Mail drafts (IMAP).** Use an app password, not your login password. Gmail: enable 2-Step Verification, then create an app password (Google Account → Security → App passwords) and set `LOOM_IMAP_HOST=imap.gmail.com`. A draft is appended with the `\Draft` flag to `LOOM_MAIL_FOLDER` (`[Gmail]/Drafts` on Gmail); the From address is `LOOM_MAIL_USER`. `LOOM_MAIL_FOLDER` must name a drafts folder: `INBOX` is rejected outright, and so are folders whose last segment is `Sent`, `Trash`, `Junk`, or `Deleted` — config validation fails with a message naming `LOOM_MAIL_FOLDER`. Draft replacement is UID-only: the old draft is found by UID search, confirmed by fetching its header (Message-ID must match exactly and the flags must carry `\Draft`), and only then replaced; without server-side UIDPLUS the old draft stays on the server and the result says so. Gmail 需要 2FA + 应用专用密码，主机填 `imap.gmail.com`，草稿夹用 `[Gmail]/Drafts`；`LOOM_MAIL_FOLDER` 必须是草稿夹（`INBOX` 直接拒绝，末段为 Sent/Trash/Junk/Deleted 的也会被拒绝），替换草稿只按 UID 精确操作，服务器不支持 UIDPLUS 时旧草稿保留并如实提示。
 
 The four tools and the gate:
 

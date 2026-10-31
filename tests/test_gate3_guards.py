@@ -20,10 +20,14 @@ from loom.tools import make_tools
 _SRC = Path(__file__).resolve().parents[1] / "src" / "loom"
 
 # Symbols the plan forbids anywhere in src/loom. If one appears, this file goes red.
-FORBIDDEN_SYMBOLS = ("send_email", "sendmail", "smtplib", "events.insert", "SMTP")
+FORBIDDEN_SYMBOLS = (
+    "send_email", "sendmail", "smtplib", "send_message", "SMTP",
+    "events.insert", "events.patch", "events.update", "events.delete",
+)
 
-# The only IMAP verbs the mail module may use: read the mailbox and manage drafts.
-IMAP_VERBS = {"append", "store", "search", "expunge", "select", "login", "logout"}
+# The only IMAP verbs the mail module may use: read the mailbox and manage
+# drafts by UID. Bare store/search/expunge are gone; UID-only is the rule.
+IMAP_VERBS = {"uid", "append", "select", "login", "logout"}
 
 
 def source_text() -> str:

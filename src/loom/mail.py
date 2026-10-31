@@ -2,12 +2,15 @@
 
 `build_draft_message` is pure and returns RFC 5322 bytes. `ImapMailTransport`
 APPENDs drafts to the configured folder with the \\Draft flag and replaces one
-by searching the old draft's Message-ID, marking it \\Deleted, and expunging.
-Credentials come from Settings, never from tool arguments, audit records, or
-error messages.
+draft through a UID-only flow: UID SEARCH, a fetch-verified identity check,
+append of the replacement, then UID STORE \\Deleted and UID EXPUNGE of that one
+UID (the expunge step only when the server advertises UIDPLUS; otherwise the
+old draft stays on the server and the result says so). Credentials come from
+Settings, never from tool arguments, audit records, or error messages.
 """
 
 import imaplib
+import re
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 from email.utils import make_msgid
@@ -55,6 +58,12 @@ def _validate_draft_id(old_id: str) -> None:
         raise ValueError(f"draft id contains forbidden characters: {old_id!r}")
 
 
+def _imap_quote(mailbox: str) -> str:
+    """One RFC 3501 quoted string; real servers reject [Gmail]/Drafts unquoted."""
+    escaped = mailbox.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def _scrub(exc: Exception, password: str) -> str:
     """Server error text with the password removed, should it ever echo back."""
     text = f"{type(exc).__name__}: {exc}"
@@ -64,7 +73,7 @@ def _scrub(exc: Exception, password: str) -> str:
 
 
 class ImapMailTransport:
-    """IMAP4_SSL draft store: append with \\Draft, replace = search + delete + append."""
+    """IMAP4_SSL draft store: append with \\Draft, replace = UID search + verified fetch + append."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -72,34 +81,69 @@ class ImapMailTransport:
     def append_draft(self, message_bytes: bytes) -> str:
         client = self._connect()
         try:
-            status, _data = client.append(self._mailbox(), r"(\Draft)", None, message_bytes)
+            status, _data = client.append(_imap_quote(self._mailbox()), r"(\Draft)", None, message_bytes)
             self._check(status, "append draft")
             return _message_id(message_bytes)
         finally:
             client.logout()
 
     def replace_draft(self, old_id: str, message_bytes: bytes) -> str:
+        """Replace one draft, touching only the message the id names.
+
+        A header SEARCH matches substrings, so the fetch of the candidate is
+        the ground truth: its Message-ID must equal `old_id` exactly and its
+        FLAGS must carry \\Draft, or nothing on the server is modified. The
+        replacement is appended before the old draft is marked \\Deleted, so a
+        mid-flight failure leaves a recoverable duplicate, never a lost draft.
+        """
         _validate_draft_id(old_id)
         client = self._connect()
         try:
-            status, _ = client.select(self._mailbox())
+            status, _ = client.select(_imap_quote(self._mailbox()))
             self._check(status, "open the drafts folder")
-            status, data = client.search(None, "HEADER", "Message-ID", f'"{old_id}"')
+            status, data = client.uid("SEARCH", "HEADER", "Message-ID", f'"{old_id}"')
             self._check(status, "search the old draft")
-            matches = (data[0] or b"").split()
-            if not matches:
-                raise ValueError(f"no existing draft matches Message-ID {old_id}")
-            # The replacement lands before the old draft is expunged: a failure
-            # then leaves a recoverable duplicate, never a lost draft.
-            status, _ = client.append(self._mailbox(), r"(\Draft)", None, message_bytes)
+            uids = (data[0] or b"").split()
+            if len(uids) != 1:
+                raise ValueError(
+                    f"expected exactly one draft matching Message-ID {old_id}, found {len(uids)}; "
+                    "nothing was modified"
+                )
+            uid = uids[0].decode("ascii")
+            flags, fetched_id = self._fetch_old_draft(client, uid)
+            if fetched_id != old_id:
+                raise ValueError(
+                    f"the draft at uid {uid} reports Message-ID {fetched_id or '(none)'}, not {old_id}; "
+                    "nothing was modified"
+                )
+            if r"\draft" not in flags.lower():
+                raise ValueError(f"the message at uid {uid} is not flagged \\Draft; nothing was modified")
+            status, _ = client.append(_imap_quote(self._mailbox()), r"(\Draft)", None, message_bytes)
             self._check(status, "append the replacement draft")
             new_id = _message_id(message_bytes)
-            for num in matches:
-                client.store(num, "+FLAGS.SILENT", r"(\Deleted)")
-            client.expunge()
+            status, _ = client.uid("STORE", uid, "+FLAGS.SILENT", r"(\Deleted)")
+            self._check(status, "mark the old draft deleted")
+            if not any(str(cap).upper() == "UIDPLUS" for cap in client.capabilities):
+                return f"{new_id} (the old draft is kept on the server: it does not advertise UIDPLUS)"
+            status, _ = client.uid("EXPUNGE", uid)
+            self._check(status, "expunge the old draft")
             return new_id
         finally:
             client.logout()
+
+    def _fetch_old_draft(self, client: imaplib.IMAP4_SSL, uid: str) -> tuple[str, str]:
+        status, data = client.uid("FETCH", uid, "(FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+        self._check(status, "fetch the old draft")
+        hits = [item for item in data if isinstance(item, tuple)]
+        if len(hits) != 1:
+            raise ValueError(
+                f"could not read the draft at uid {uid}: fetch returned {len(hits)} message(s); nothing was modified"
+            )
+        prefix, header = hits[0][0], hits[0][1]
+        match = re.search(rb"FLAGS \(([^)]*)\)", prefix)
+        flags = match.group(1).decode("utf-8", "replace") if match else ""
+        message_id = str(message_from_bytes(header or b"", policy=policy.default)["Message-ID"] or "")
+        return flags, message_id
 
     def _mailbox(self) -> str:
         return self._settings.mail_folder
@@ -109,17 +153,17 @@ class ImapMailTransport:
         try:
             client = imaplib.IMAP4_SSL(s.imap_host, s.imap_port)
         except OSError as exc:
-            raise RuntimeError(
+                raise RuntimeError(
                 f"could not reach IMAP server {s.imap_host}:{s.imap_port} ({_scrub(exc, s.mail_password)}); "
                 "check LOOM_IMAP_HOST and LOOM_IMAP_PORT"
-            ) from exc
+            ) from None
         try:
             client.login(s.mail_user, s.mail_password)
         except imaplib.IMAP4.error as exc:
             client.logout()
             raise RuntimeError(
                 f"IMAP login failed ({_scrub(exc, s.mail_password)}); check LOOM_MAIL_USER and LOOM_MAIL_PASSWORD"
-            ) from exc
+            ) from None
         return client
 
     def _check(self, status: str, what: str) -> None:

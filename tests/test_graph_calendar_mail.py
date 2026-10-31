@@ -1,5 +1,8 @@
 """The graph with calendar and mail tools: read-only answers, gate, audit, draft id."""
 
+import json
+from email import message_from_bytes, policy
+
 from conftest import (
     CALENDAR_ICS,
     FakeCalendarTransport,
@@ -97,3 +100,52 @@ def test_draft_approve_calls_the_transport_once_and_reports_the_draft_id(tmp_pat
     assert ("loom", "executed") in decisions
     tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
     assert "fake-draft-1" in tool_messages[-1].content
+
+
+def test_approval_payload_shows_full_draft_body(tmp_path):
+    body = "Thursday plan, section by section. " * 76
+    assert len(body) > 2500
+    mail = FakeMailTransport()
+    graph = make_graph(
+        tmp_path,
+        [
+            tool_call_msg("mail_create_draft", {"to": "peer@example.com", "subject": "Plan", "body": body}),
+            AIMessage(content="draft saved"),
+        ],
+        {"mail": mail},
+    )
+    config = {"configurable": {"thread_id": "t-full"}}
+
+    paused = graph.invoke({"messages": [{"role": "user", "content": "draft a mail"}], "run_id": "r10"}, config)
+    args = paused["__interrupt__"][0].value["tools"][0]["args"]
+
+    assert body in args, "the approval payload carries the body verbatim"
+
+    result = graph.invoke(Command(resume={"decision": "approve"}), config)
+
+    content = message_from_bytes(mail.appended[0], policy=policy.default).get_body(
+        preferencelist=("plain",)
+    ).get_content()
+    assert body in content, "the transport recorded the complete body"
+    tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert "fake-draft-1" in tool_messages[-1].content
+
+
+def test_oversized_draft_is_refused_before_approval(tmp_path):
+    mail = FakeMailTransport()
+    graph = make_graph(
+        tmp_path,
+        [tool_call_msg("mail_create_draft", {"to": "peer@example.com", "subject": "Plan", "body": "y" * 10001})],
+        {"mail": mail},
+    )
+    config = {"configurable": {"thread_id": "t-oversize"}}
+
+    result = graph.invoke({"messages": [{"role": "user", "content": "draft a huge mail"}], "run_id": "r11"}, config)
+
+    assert "__interrupt__" not in result, "an oversized draft never reaches approval"
+    final = result["messages"][-1].content
+    assert "refused" in final and "limit" in final
+    assert mail.appended == [] and mail.replaced == [], "nothing reached the transport"
+    records = read_audit(tmp_path)
+    assert [(record["actor"], record["decision"]) for record in records] == [("loom", "rejected")]
+    assert json.loads(records[0]["args"]) == {"reason": "draft exceeds the approval size limit"}

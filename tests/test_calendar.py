@@ -131,7 +131,7 @@ def test_http_transport_fetches_a_real_ics_round_trip(ics_server):
 def test_http_transport_http_error_is_readable(ics_server):
     transport = HttpCalendarTransport(ics_server.rsplit("/", 1)[0] + "/missing.ics", timeout=5)
 
-    with pytest.raises(RuntimeError, match="HTTP 404"):
+    with pytest.raises(RuntimeError, match="calendar feed fetch failed"):
         transport.fetch_ics()
 
 
@@ -145,6 +145,62 @@ def test_http_transport_error_message_never_carries_url_credentials(ics_server):
     message = str(exc_info.value)
     assert "super-secret" not in message and "user@" not in message
     assert host in message, "the readable message still names the redacted URL"
+
+
+def test_fetch_ics_error_has_no_cause_chain():
+    transport = HttpCalendarTransport("http://127.0.0.1:1/private-token.ics", timeout=2)
+
+    with pytest.raises(RuntimeError, match="calendar feed fetch failed") as exc_info:
+        transport.fetch_ics()
+
+    assert exc_info.value.__cause__ is None, "the chained exception can carry the raw URL"
+    assert exc_info.value.__suppress_context__ is True
+    assert "private-token" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["file:///etc/ics.ics", "http://example.com/private-cbd8f2basic.ics"],
+)
+def test_fetch_ics_rejects_non_https(url):
+    transport = HttpCalendarTransport(url, timeout=2)
+
+    with pytest.raises(RuntimeError, match="calendar feed fetch failed.*ValueError"):
+        transport.fetch_ics()
+
+
+def test_fetch_ics_caps_response_body():
+    class _LargeHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"x" * (1024 * 1024 + 16))
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _LargeHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        transport = HttpCalendarTransport(f"http://127.0.0.1:{server.server_address[1]}/big.ics", timeout=5)
+
+        with pytest.raises(RuntimeError, match="calendar feed fetch failed"):
+            transport.fetch_ics()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_tool_error_never_contains_ics_secret(tmp_path):
+    settings = Settings(loom_env="dev", loom_data_dir=tmp_path, loom_sandbox_root=tmp_path / "sandbox")
+    transport = HttpCalendarTransport("http://127.0.0.1:1/ics?token=supersecret1", timeout=2)
+    registry = make_tools(settings, {"calendar": transport})
+
+    with pytest.raises(RuntimeError) as exc_info:
+        registry["calendar_list_events"].func.invoke({"range_name": "today"})
+
+    assert "supersecret1" not in str(exc_info.value)
+    assert "127.0.0.1:1/…" in str(exc_info.value)
 
 
 def _ics_at(offsets):

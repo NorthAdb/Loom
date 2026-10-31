@@ -30,9 +30,15 @@ MEMORY_REFUSAL = (
     "so nothing was saved to memory."
 )
 
-# The interrupt payload cap is larger than the audit cap so a draft's full text
-# is visible at approval; see summarize_args.
 _GATE_PAYLOAD_CAP = 2000
+
+_MAIL_DRAFT_TOOLS = {"mail_create_draft", "mail_update_draft"}
+_DRAFT_SIZE_LIMIT = 10_000
+
+
+def _draft_args_size(args: dict) -> int:
+    """Combined length of a draft's to+subject+body, the gate's refusal basis."""
+    return sum(len(str(args.get(name, "") or "")) for name in ("to", "subject", "body"))
 
 
 class GraphState(TypedDict):
@@ -104,8 +110,38 @@ def build_graph(
 
     def gate(state: GraphState) -> dict:
         calls = [c for c in _last_tool_calls(state) if (spec := registry.get(c["name"])) and spec.side_effect]
+        oversized = [
+            c for c in calls if c["name"] in _MAIL_DRAFT_TOOLS and _draft_args_size(c["args"]) > _DRAFT_SIZE_LIMIT
+        ]
+        if oversized:
+            # Refused before approval: no interrupt, nothing executes, and the
+            for c in oversized:
+                audit.append(
+                    run_id=state.get("run_id", ""),
+                    actor="loom",
+                    tool=c["name"],
+                    args={"reason": "draft exceeds the approval size limit"},
+                    decision="rejected",
+                )
+            c = oversized[0]
+            payload = {
+                "tools": [{"name": c["name"], "args": summarize_args(c["args"])}],
+                "refusal": (
+                    f"Draft refused before approval: to+subject+body exceed the "
+                    f"{_DRAFT_SIZE_LIMIT}-character approval size limit."
+                ),
+            }
+            return {"approval_status": "rejected", "pending_action": payload}
         payload = {
-            "tools": [{"name": c["name"], "args": summarize_args(c["args"], cap=_GATE_PAYLOAD_CAP)} for c in calls],
+            "tools": [
+                {
+                    "name": c["name"],
+                    "args": summarize_args(
+                        c["args"], cap=_DRAFT_SIZE_LIMIT if c["name"] in _MAIL_DRAFT_TOOLS else _GATE_PAYLOAD_CAP
+                    ),
+                }
+                for c in calls
+            ],
             "reason": "These tools change state and need human approval.",
         }
         resume = interrupt(payload)
@@ -168,8 +204,12 @@ def build_graph(
         return {}
 
     def aborted(state: GraphState) -> dict:
-        names = ", ".join(item["name"] for item in (state.get("pending_action") or {}).get("tools", []))
+        payload = state.get("pending_action") or {}
+        names = ", ".join(item["name"] for item in payload.get("tools", []))
         text = f"The proposed action ({names}) was rejected and was not executed."
+        refusal = payload.get("refusal")
+        if refusal:
+            text = f"{text} {refusal}"
         return {"messages": [AIMessage(content=text)], "pending_action": None}
 
     graph = StateGraph(GraphState)

@@ -7,11 +7,10 @@ anything in this module: the only network call is a GET of the feed.
 """
 
 import logging
-import urllib.error
 import urllib.request
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Protocol
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from dateutil.rrule import rrulestr
@@ -25,6 +24,10 @@ logger = logging.getLogger("loom")
 _WINDOW_OCCURRENCE_CAP = 200
 _ENUMERATION_CAP = 100_000
 
+# whole response into memory.
+_MAX_FEED_BYTES = 1024 * 1024
+_READ_CHUNK = 64 * 1024
+
 
 class CalendarTransport(Protocol):
     """How the calendar tools reach an ICS feed."""
@@ -33,31 +36,71 @@ class CalendarTransport(Protocol):
 
 
 def redact_url(url: str) -> str:
-    """The URL for messages: scheme, host, port, path; never userinfo."""
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+    """The URL for messages: scheme and host only, with an explicit truncation mark.
+
+    The path and query often carry the feed's private token, so they are
+    always dropped; userinfo is dropped with them.
+    """
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        if not parts.scheme or not host:
+            return "<unparseable url>"
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        return f"{parts.scheme}://{host}/…"
+    except ValueError:
+        return "<unparseable url>"
+
+
+def _is_loopback(host: str) -> bool:
+    return host == "localhost" or host == "::1" or host.startswith("127.")
+
+
+class _HTTPSOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlsplit(str(newurl)).scheme != "https":
+            raise ValueError(f"refusing redirect to a non-https URL ({redact_url(str(newurl))})")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class HttpCalendarTransport:
-    """GETs the ICS feed over HTTP(S); failures become readable RuntimeErrors."""
+    """GETs the ICS feed over https; every failure becomes one redacted RuntimeError.
+
+    https is required because these feed URLs carry a private token in the
+    path or query; plain http is accepted only for loopback hosts, which never
+    leaves the machine (tests and demos serve fixtures that way). The original
+    exception is never chained: it can embed the raw URL and its credentials.
+    """
 
     def __init__(self, url: str, timeout: float = 15.0) -> None:
         self._url = url
         self._timeout = timeout
+        self._opener = urllib.request.build_opener(_HTTPSOnlyRedirectHandler())
 
     def fetch_ics(self) -> bytes:
         try:
-            with urllib.request.urlopen(self._url, timeout=self._timeout) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            raise RuntimeError(f"calendar fetch failed: HTTP {exc.code} from {redact_url(self._url)}") from exc
-        except OSError as exc:
-            raise RuntimeError(f"calendar feed unreachable at {redact_url(self._url)} ({exc}); check LOOM_ICAL_URL") from exc
-        except ValueError as exc:
-            raise RuntimeError(f"LOOM_ICAL_URL is not a usable URL: {redact_url(self._url)}") from exc
+            return self._fetch()
+        except Exception as exc:  # noqa: BLE001 - one redacted failure shape for every cause
+            raise RuntimeError(f"calendar feed fetch failed: {type(exc).__name__} ({redact_url(self._url)})") from None
+
+    def _fetch(self) -> bytes:
+        parts = urlsplit(self._url)
+        if parts.scheme != "https" and not (parts.scheme == "http" and _is_loopback(parts.hostname or "")):
+            raise ValueError("only https calendar feeds are supported")
+        with self._opener.open(self._url, timeout=self._timeout) as response:
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = response.read(_READ_CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_FEED_BYTES:
+                    raise ValueError(f"calendar feed exceeds the {_MAX_FEED_BYTES // 1024} KiB response cap")
+                chunks.append(chunk)
+            return b"".join(chunks)
 
 
 def _to_tz(prop, tz: ZoneInfo) -> tuple[datetime, bool]:

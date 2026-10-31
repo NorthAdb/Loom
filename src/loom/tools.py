@@ -196,8 +196,8 @@ def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, 
         if mail_transport is None:
             raise RuntimeError(MAIL_NOT_CONFIGURED)
         message = build_draft_message(to, subject, body, from_addr=settings.mail_user)
-        new_id = mail_transport.replace_draft(draft_id, message)
-        return f"draft {draft_id} replaced by {new_id} in '{settings.mail_folder}'"
+        outcome = mail_transport.replace_draft(draft_id, message)
+        return f"draft {draft_id} replaced in '{settings.mail_folder}' by {outcome}"
 
     return {
         "get_time": ToolSpec(get_time, side_effect=False),
