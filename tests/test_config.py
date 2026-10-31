@@ -88,3 +88,30 @@ def test_mail_folder_rejects_control_characters(folder):
 
 def test_mail_folder_accepts_non_ascii_names():
     assert Settings(loom_env="dev", mail_folder="草稿").mail_folder == "草稿"
+
+
+@pytest.mark.parametrize(
+    "folder",
+    [
+        "INBOX",
+        "INBOX/",
+        "INBOX.",
+        "[Gmail]/Sent Mail",
+        "Sent Items",
+        "Deleted Items",
+        "Spam",
+        "[Gmail]/All Mail",
+        "Archive",
+    ],
+)
+def test_mail_folder_rejects_non_drafts_leaves_and_aliases(folder):
+    with pytest.raises(ConfigError, match="LOOM_MAIL_FOLDER"):
+        Settings(loom_env="dev", mail_folder=folder)
+
+
+@pytest.mark.parametrize(
+    "folder",
+    ["Drafts", "[Gmail]/Drafts", "Archive/2026"],
+)
+def test_mail_folder_accepts_drafts_folders_under_a_forbidden_parent(folder):
+    assert Settings(loom_env="dev", mail_folder=folder).mail_folder == folder
