@@ -30,9 +30,6 @@ MEMORY_REFUSAL = (
     "so nothing was saved to memory."
 )
 
-# The interrupt payload cap applies to non-mail tools only: mail tool args go
-# through uncapped (summarize_args cap=None) so the approval shows the full
-# draft, bounded instead by the gate's pre-approval size refusal below.
 _GATE_PAYLOAD_CAP = 2000
 
 _MAIL_DRAFT_TOOLS = {"mail_create_draft", "mail_update_draft"}
@@ -118,7 +115,6 @@ def build_graph(
         ]
         if oversized:
             # Refused before approval: no interrupt, nothing executes, and the
-            # aborted node tells the user why.
             for c in oversized:
                 audit.append(
                     run_id=state.get("run_id", ""),
@@ -130,7 +126,6 @@ def build_graph(
             c = oversized[0]
             payload = {
                 "tools": [{"name": c["name"], "args": summarize_args(c["args"])}],
-                "reason": "These tools change state and need human approval.",
                 "refusal": (
                     f"Draft refused before approval: to+subject+body exceed the "
                     f"{_DRAFT_SIZE_LIMIT}-character approval size limit."
@@ -142,7 +137,7 @@ def build_graph(
                 {
                     "name": c["name"],
                     "args": summarize_args(
-                        c["args"], cap=None if c["name"] in _MAIL_DRAFT_TOOLS else _GATE_PAYLOAD_CAP
+                        c["args"], cap=_DRAFT_SIZE_LIMIT if c["name"] in _MAIL_DRAFT_TOOLS else _GATE_PAYLOAD_CAP
                     ),
                 }
                 for c in calls

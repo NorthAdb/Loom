@@ -148,7 +148,6 @@ class FakeIMAPClient:
         return "BAD", [b"unexpected uid command"]
 
     def expunge(self):
-        # Bare EXPUNGE is banned: mail.py must never wipe other deleted mail.
         self.calls.append(("expunge",))
         return "OK", [b""]
 

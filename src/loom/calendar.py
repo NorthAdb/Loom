@@ -24,7 +24,6 @@ logger = logging.getLogger("loom")
 _WINDOW_OCCURRENCE_CAP = 200
 _ENUMERATION_CAP = 100_000
 
-# A feed larger than this is refused mid-read, so a bad URL cannot pull the
 # whole response into memory.
 _MAX_FEED_BYTES = 1024 * 1024
 _READ_CHUNK = 64 * 1024
@@ -59,7 +58,6 @@ def _is_loopback(host: str) -> bool:
 
 
 class _HTTPSOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Refuse any redirect that would not land on https."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if urlsplit(str(newurl)).scheme != "https":

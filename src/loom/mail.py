@@ -132,7 +132,6 @@ class ImapMailTransport:
             client.logout()
 
     def _fetch_old_draft(self, client: imaplib.IMAP4_SSL, uid: str) -> tuple[str, str]:
-        """One UID FETCH of the candidate draft: its (FLAGS, Message-ID)."""
         status, data = client.uid("FETCH", uid, "(FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
         self._check(status, "fetch the old draft")
         hits = [item for item in data if isinstance(item, tuple)]
@@ -154,8 +153,7 @@ class ImapMailTransport:
         try:
             client = imaplib.IMAP4_SSL(s.imap_host, s.imap_port)
         except OSError as exc:
-            # from None: the chain can echo the password back through the traceback.
-            raise RuntimeError(
+                raise RuntimeError(
                 f"could not reach IMAP server {s.imap_host}:{s.imap_port} ({_scrub(exc, s.mail_password)}); "
                 "check LOOM_IMAP_HOST and LOOM_IMAP_PORT"
             ) from None

@@ -104,7 +104,7 @@ def test_draft_approve_calls_the_transport_once_and_reports_the_draft_id(tmp_pat
 
 def test_approval_payload_shows_full_draft_body(tmp_path):
     body = "Thursday plan, section by section. " * 76
-    assert len(body) > 2500, "longer than any payload cap, so the old truncation would fail this"
+    assert len(body) > 2500
     mail = FakeMailTransport()
     graph = make_graph(
         tmp_path,

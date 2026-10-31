@@ -39,9 +39,7 @@ _SECRET_PREFIXES = ("sk-", "pk_", "ghp_", "akia", "xox")
 _LONG_TOKEN = re.compile(r"[A-Za-z0-9_-]{24,}")
 _SECRET_WORD = re.compile(r"key|token|secret|password", re.IGNORECASE)
 
-# FactsStore value guard: a pasted API key often has no provider prefix, so a
-# high-entropy run or a literal "password xxx" shape is refused too.
-_HIGH_ENTROPY_MIN_RUN = 16
+_HIGH_ENTROPY_TOKEN = re.compile("[A-Za-z0-9+/=_.-]{16,}")
 _HIGH_ENTROPY_BITS = 3.25
 _PASSWORD_SHAPE = re.compile(r"\b(?:password|passwd|pwd)\b\s*[:=]?\s*\S", re.IGNORECASE)
 
@@ -57,12 +55,13 @@ def _shannon_entropy(text: str) -> float:
 def looks_like_secret_value(value: str) -> bool:
     """Report whether a facts value carries a secret beyond the chat guard's shapes.
 
-    Refuses any whitespace-delimited run of >= 16 characters whose Shannon
-    entropy is >= 3.25 bits/char (random tokens are; prose is not), and any
-    "password xxx" / "passwd: xxx" / "pwd=xxx" shape at any length.
+    Refuses any token-shaped run of >= 16 ASCII characters (base64/hex/alnum
+    shapes) whose Shannon entropy is >= 3.25 bits/char, and any
+    "password xxx" / "passwd: xxx" / "pwd=xxx" shape at any length. CJK prose
+    never forms these runs and always passes.
     """
-    for run in value.split():
-        if len(run) >= _HIGH_ENTROPY_MIN_RUN and _shannon_entropy(run) >= _HIGH_ENTROPY_BITS:
+    for run in _HIGH_ENTROPY_TOKEN.findall(value):
+        if _shannon_entropy(run) >= _HIGH_ENTROPY_BITS:
             return True
     return bool(_PASSWORD_SHAPE.search(value))
 
