@@ -41,8 +41,6 @@ _SECRET_WORD = re.compile(r"key|token|secret|password", re.IGNORECASE)
 
 _HIGH_ENTROPY_TOKEN = re.compile("[A-Za-z0-9+/=_.-]{16,}")
 _HIGH_ENTROPY_BITS = 3.25
-# Words in plain casing (lower/upper/title) are prose, not tokens; anything
-# else a shape captures is treated as a value worth refusing.
 _UUID_OR_HEX = "0123456789abcdefABCDEF-"
 _URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
 _PASSWORD_SHAPE = re.compile(r"\b(?:password|passwd|pwd)\b\s*[:=]?\s*(\S+)", re.IGNORECASE)
