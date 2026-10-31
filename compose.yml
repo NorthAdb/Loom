@@ -1,0 +1,25 @@
+# Mount policy: the sandbox container sees exactly one host directory, the sandbox
+# workspace volume (${LOOM_SANDBOX_ROOT:-./sandbox}). It mounts no docker.sock and
+# nothing from the host home directory. The container runs as uid 10001 with a
+# read-only root filesystem and CPU/memory caps; only /workspace is writable.
+services:
+  loom-sandbox:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - "${LOOM_SANDBOX_ROOT:-./sandbox}:/workspace"
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
