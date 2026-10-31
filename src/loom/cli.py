@@ -1,6 +1,7 @@
 """Command line entry points: loom version, doctor, chat, routines, approvals, memory, worker."""
 
 import argparse
+import imaplib
 import logging
 import os
 import socket
@@ -10,6 +11,7 @@ import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from functools import partial
 from pathlib import Path
 
@@ -72,6 +74,35 @@ def _imap_reachable(host: str, port: int) -> bool:
             return True
     except OSError:
         return False
+
+
+def _imap_drafts_special_use(host: str, port: int, user: str, password: str, folder: str) -> bool | None:
+    """Whether the server lists `folder` with the \\Drafts special-use flag.
+
+    True when it does, False when it is listed without it, None when the
+    check cannot run (connect, login, or LIST failure, folder absent).
+    Doctor only warns on False, so this stays advisory and never raises.
+    """
+    try:
+        client = imaplib.IMAP4_SSL(host, port, timeout=2)
+    except Exception:  # noqa: BLE001 - advisory check must never break doctor
+        return None
+    try:
+        client.login(user, password)
+        status, data = client.list()
+    except Exception:  # noqa: BLE001 - advisory check must never break doctor
+        return None
+    finally:
+        with suppress(Exception):
+            client.logout()
+    if status != "OK":
+        return None
+    for line in data:
+        text = line.decode("utf-8", "replace") if isinstance(line, bytes) else str(line or "")
+        if f'"{folder}"' not in text:
+            continue
+        return r"\drafts" in text.lower()
+    return None
 
 
 def _doctor() -> int:
@@ -143,6 +174,13 @@ def _doctor() -> int:
         folder = settings.mail_folder if settings else os.environ.get("LOOM_MAIL_FOLDER", "") or "Drafts"
         if _imap_reachable(imap_host, imap_port):
             print(f"{_OK}imap {imap_host}:{imap_port} drafts folder {folder}")
+            mail_user = settings.mail_user if settings else os.environ.get("LOOM_MAIL_USER", "")
+            mail_password = settings.mail_password if settings else os.environ.get("LOOM_MAIL_PASSWORD", "")
+            if mail_user and mail_password and _imap_drafts_special_use(imap_host, imap_port, mail_user, mail_password, folder) is False:
+                print(
+                    f"{_WARN}imap drafts folder {folder} does not advertise the \\Drafts special-use flag; "
+                    "verify it is a drafts folder"
+                )
         else:
             print(
                 f"{_FAIL}imap {imap_host}:{imap_port} drafts folder {folder} "

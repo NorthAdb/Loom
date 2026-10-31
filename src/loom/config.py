@@ -21,12 +21,35 @@ _DEFAULT_TIMEZONE = "Asia/Hong_Kong"
 # Leaf segments a drafts folder must not have: LOOM_MAIL_FOLDER points at the
 # drafts mailbox, and a wrong pick here would let draft replacement delete or
 # expunge unrelated mail. Matched case-insensitively against the last segment
-# (after "/" or "." hierarchy separators) of the configured folder.
-_FORBIDDEN_MAIL_FOLDER_LEAVES = {"inbox", "sent", "trash", "junk", "deleted"}
+# (after "/" or "." hierarchy separators) of the configured folder; trailing
+# separators are stripped first so "INBOX/" and "INBOX." cannot dodge the check.
+_FORBIDDEN_MAIL_FOLDER_LEAVES = {
+    "inbox",
+    "sent",
+    "sent mail",
+    "sent items",
+    "sent messages",
+    "trash",
+    "junk",
+    "junk email",
+    "spam",
+    "deleted",
+    "deleted items",
+    "deleted messages",
+    "all mail",
+    "archive",
+}
 
 
 def _validate_mail_folder(name: str) -> None:
-    leaf = re.split(r"[/.]", name.strip())[-1].lower()
+    # A control character (CR/LF/NUL/TAB/DEL) inside a mailbox name could
+    # terminate it early and inject an IMAP command, so reject it outright.
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+        raise ConfigError(
+            f"LOOM_MAIL_FOLDER: {name!r} must not contain control characters "
+            "(a control character in a mailbox name could inject an IMAP command)"
+        )
+    leaf = re.split(r"[/.]", name.strip().rstrip("/."))[-1].lower()
     if leaf in _FORBIDDEN_MAIL_FOLDER_LEAVES:
         raise ConfigError(
             f"LOOM_MAIL_FOLDER: {name!r} is not a drafts folder; "

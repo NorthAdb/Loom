@@ -11,6 +11,7 @@ Settings, never from tool arguments, audit records, or error messages.
 
 import imaplib
 import re
+from contextlib import suppress
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 from email.utils import make_msgid
@@ -56,6 +57,12 @@ def _validate_draft_id(old_id: str) -> None:
         raise ValueError(f"draft id is not a Message-ID: {old_id!r}")
     if any(ch in old_id for ch in ('"', "\r", "\n")):
         raise ValueError(f"draft id contains forbidden characters: {old_id!r}")
+    if len(old_id) > 998:
+        # RFC 5322 caps a header line at 998 characters, so a longer id cannot
+        # be a real Message-ID and would truncate inside approval payloads.
+        raise ValueError(
+            f"draft id is longer than the 998-character Message-ID line limit ({len(old_id)} characters)"
+        )
 
 
 def _imap_quote(mailbox: str) -> str:
@@ -122,7 +129,13 @@ class ImapMailTransport:
             self._check(status, "append the replacement draft")
             new_id = _message_id(message_bytes)
             status, _ = client.uid("STORE", uid, "+FLAGS.SILENT", r"(\Deleted)")
-            self._check(status, "mark the old draft deleted")
+            if status != "OK":
+                # The replacement is already on the server, so unlike the steps
+                # before it this failure leaves two drafts behind; say so.
+                raise RuntimeError(
+                    f"IMAP marking the old draft deleted failed ({status}); the replacement draft was appended "
+                    f"but the old draft {old_id} is not deleted, so the drafts folder now contains two copies"
+                )
             if not any(str(cap).upper() == "UIDPLUS" for cap in client.capabilities):
                 return f"{new_id} (the old draft is kept on the server: it does not advertise UIDPLUS)"
             status, _ = client.uid("EXPUNGE", uid)
@@ -153,14 +166,17 @@ class ImapMailTransport:
         try:
             client = imaplib.IMAP4_SSL(s.imap_host, s.imap_port)
         except OSError as exc:
-                raise RuntimeError(
+            raise RuntimeError(
                 f"could not reach IMAP server {s.imap_host}:{s.imap_port} ({_scrub(exc, s.mail_password)}); "
                 "check LOOM_IMAP_HOST and LOOM_IMAP_PORT"
             ) from None
         try:
             client.login(s.mail_user, s.mail_password)
         except imaplib.IMAP4.error as exc:
-            client.logout()
+            # A server that already disconnected makes logout raise, and that
+            # error must not replace the redacted one (it can echo the password).
+            with suppress(Exception):
+                client.logout()
             raise RuntimeError(
                 f"IMAP login failed ({_scrub(exc, s.mail_password)}); check LOOM_MAIL_USER and LOOM_MAIL_PASSWORD"
             ) from None
