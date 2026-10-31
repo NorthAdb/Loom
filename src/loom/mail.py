@@ -11,6 +11,7 @@ Settings, never from tool arguments, audit records, or error messages.
 
 import imaplib
 import re
+from contextlib import suppress
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 from email.utils import make_msgid
@@ -153,14 +154,17 @@ class ImapMailTransport:
         try:
             client = imaplib.IMAP4_SSL(s.imap_host, s.imap_port)
         except OSError as exc:
-                raise RuntimeError(
+            raise RuntimeError(
                 f"could not reach IMAP server {s.imap_host}:{s.imap_port} ({_scrub(exc, s.mail_password)}); "
                 "check LOOM_IMAP_HOST and LOOM_IMAP_PORT"
             ) from None
         try:
             client.login(s.mail_user, s.mail_password)
         except imaplib.IMAP4.error as exc:
-            client.logout()
+            # A server that already disconnected makes logout raise, and that
+            # error must not replace the redacted one (it can echo the password).
+            with suppress(Exception):
+                client.logout()
             raise RuntimeError(
                 f"IMAP login failed ({_scrub(exc, s.mail_password)}); check LOOM_MAIL_USER and LOOM_MAIL_PASSWORD"
             ) from None

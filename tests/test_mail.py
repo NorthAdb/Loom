@@ -1,6 +1,7 @@
 """Mail module: message building, the tool surface, and IMAP error paths."""
 
 import imaplib
+import traceback
 from email import message_from_bytes, policy
 
 import pytest
@@ -302,7 +303,11 @@ def test_mail_folder_inbox_is_rejected_by_config():
 
 
 class _LoginFailsClient:
-    """login() raises like a real server rejecting bad credentials."""
+    """login() raises like a real server rejecting bad credentials.
+
+    The error echoes the password back, as some servers do, so the scrub
+    in the error path is genuinely exercised.
+    """
 
     def __init__(self):
         self.calls = []
@@ -310,7 +315,7 @@ class _LoginFailsClient:
 
     def login(self, user, password):
         self.calls.append(("login", user))
-        raise imaplib.IMAP4.error(b"[AUTHENTICATIONFAILED] Login failed.")
+        raise imaplib.IMAP4.error(f"[AUTHENTICATIONFAILED] {password} rejected")
 
     def logout(self):
         self.calls.append(("logout",))
@@ -326,6 +331,40 @@ def test_imap_errors_have_no_cause_chain(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="LOOM_MAIL_USER") as exc_info:
         transport.append_draft(build_draft_message("a@b.com", "s", "b", "owner@example.com"))
 
+    assert "***" in str(exc_info.value), "the scrub replaces the password the server echoed"
     assert "secret-pass-42" not in str(exc_info.value)
     assert exc_info.value.__cause__ is None, "the chained exception can echo the password"
     assert exc_info.value.__suppress_context__ is True
+
+
+class _LoginAndLogoutFailClient:
+    """login() echoes the password; the server is already gone by logout()."""
+
+    def __init__(self):
+        self.calls = []
+        self.capabilities = ["UIDPLUS"]
+
+    def login(self, user, password):
+        self.calls.append(("login", user))
+        raise imaplib.IMAP4.error(f"[AUTHENTICATIONFAILED] {password} rejected")
+
+    def logout(self):
+        self.calls.append(("logout",))
+        raise OSError("EOF read where a bytestring was expected")
+
+
+def test_login_failure_survives_a_failing_logout_and_still_scrubs_the_password(monkeypatch, tmp_path):
+    client = _LoginAndLogoutFailClient()
+    monkeypatch.setattr("loom.mail.imaplib.IMAP4_SSL", lambda host, port: client)
+    settings = make_settings(tmp_path, mail_password="secret-pass-42")
+    transport = ImapMailTransport(settings)
+
+    try:
+        transport.append_draft(build_draft_message("a@b.com", "s", "b", "owner@example.com"))
+    except RuntimeError as exc:
+        assert "LOOM_MAIL_USER" in str(exc)
+        assert "secret-pass-42" not in str(exc)
+        assert exc.__cause__ is None, "the chained exception can echo the password"
+        assert "secret-pass-42" not in traceback.format_exc()
+    else:
+        raise AssertionError("append_draft must raise the redacted RuntimeError, not the logout error")
