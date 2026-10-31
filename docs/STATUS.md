@@ -2,7 +2,7 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-10-31 (Phase 2 sandbox merged; Gate 1 materials: Phase 0 + Phase 1 merged).
+Last updated: 2026-10-31 (Phase 2 sandbox merged; Phase 3 routines in; Gate 1 materials: Phase 0 + Phase 1 merged).
 
 ## Done
 
@@ -15,6 +15,7 @@ Last updated: 2026-10-31 (Phase 2 sandbox merged; Gate 1 materials: Phase 0 + Ph
 - [x] Phase 2 file sandbox: jailed sandbox dispatcher (path jail, 1 MiB read cap), local in-process and HTTP transports, six file tools (`list_dir` / `read_file` unapproved; `write_file` / `mkdir` / `move_file` / `delete_file` behind the gate), compose service with non-root user, read-only root filesystem and resource caps, `fixtures/sandbox_messy/`, tidy demo `scripts/demo_gate2.py`, doctor sandbox check
 - [x] Local file sandbox
 - [x] Local single-host Docker runtime (sandbox service; the agent loop still runs on the host)
+- [x] Phase 3 scheduled routines: routine store (`routines.json`, audited mutations, cron validated by `CronTrigger.from_crontab`), runner over the same compiled graph as chat (`thread_id` = `routine:{id}:{ts}`), unattended pending approval queue (`approvals/pending.json`) that stops before any write, `loom routines add|list|remove|run` and `loom approvals list|approve|reject` CLI, APScheduler `loom worker` (no hot reload), accelerated schedule-trigger test, demo `scripts/demo_gate2_routines.py`
 
 ## In progress
 
@@ -24,7 +25,6 @@ Last updated: 2026-10-31 (Phase 2 sandbox merged; Gate 1 materials: Phase 0 + Ph
 
 ### P0 — Sandbox, routines, approval
 
-- [ ] Scheduled routines
 - [ ] Memory baseline: Mem0
 - [ ] Memory baseline: self-owned facts and preferences table
 

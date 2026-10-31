@@ -2,6 +2,8 @@ from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 
 import loom.cli
+import loom.runtime
+from loom.graph import build_graph
 
 
 class Reader:
@@ -19,7 +21,7 @@ class Reader:
 def make_session_graph(tmp_path, scripted):
     settings = _settings(tmp_path)
     model = ScriptedChatModel(messages=iter(scripted))
-    return loom.cli.build_graph(model, settings)
+    return build_graph(model, settings)
 
 
 def _settings(tmp_path):
@@ -73,7 +75,7 @@ def test_chat_command_builds_the_graph_through_the_cli_factory(monkeypatch, tmp_
         AIMessage(content="done"),
     ]
     model = ScriptedChatModel(messages=iter(scripted))
-    monkeypatch.setattr(loom.cli, "make_model", lambda settings: model)
+    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: model)
     reader = Reader(["write it", "approve", "quit"])
     lines = []
 

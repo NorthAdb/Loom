@@ -4,7 +4,7 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Status:** Phase 0 engineering shell, the Phase 1 core loop, and the Phase 2 file sandbox are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, tests). Routines, memory, calendar, email, and browser are not started. See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, and Phase 3 scheduled routines are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, tests). Memory, calendar, email, and browser are not started. See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Loom is
 
@@ -52,7 +52,7 @@ Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the 
 | Runtime | Local / single-host Docker | Sandbox service (compose) |
 | License | MIT | [LICENSE](LICENSE) |
 
-Dependencies are added only when a roadmap item needs them. The current runtime dependencies are pydantic-settings, LangGraph, and the LangChain OpenAI integration.
+Dependencies are added only when a roadmap item needs them. The current runtime dependencies are pydantic-settings, LangGraph, the LangChain OpenAI integration, and APScheduler.
 
 ## How to run
 
@@ -135,6 +135,44 @@ Example prompt / 示例提示词：
 ```text
 把沙箱里的文件按扩展名整理到 sorted/<ext>/ 目录
 ```
+
+### Routines and approvals
+
+A routine is a saved prompt with a cron schedule. Every fire runs through the same compiled LangGraph graph as chat, so the approval gate applies to routines exactly as it does to a person typing. A schedule is a start time, not permission: a routine that reaches a side-effect tool persists a pending approval and stops. Nothing is written until a person runs `loom approvals approve`.
+
+```bash
+loom routines add --id daily_sandbox_stats --name "Daily sandbox stats" --cron "30 8 * * *" \
+  --prompt "List the sandbox and summarize how many files there are by extension."
+loom routines list
+loom routines run daily_sandbox_stats
+loom routines remove daily_sandbox_stats
+loom approvals list
+loom approvals approve <pending_id>    # or: loom approvals reject <pending_id>
+```
+
+Two ready-to-paste examples:
+
+```bash
+# Read-only stats at 08:30 every day; runs without approval.
+loom routines add --id daily_sandbox_stats --name "Daily sandbox stats" --cron "30 8 * * *" \
+  --prompt "List the sandbox and summarize how many files there are by extension."
+
+# Tidy at 09:00 every day; waits in the pending queue before any file moves.
+loom routines add --id daily_tidy --name "Daily tidy" --cron "0 9 * * *" \
+  --prompt "Tidy the sandbox: move every file into sorted/<extension>/ by its extension."
+```
+
+To fire routines on their schedules, keep `loom worker` running in a terminal or a service:
+
+```bash
+loom worker
+```
+
+- The worker loads routines once at startup. Routines added while it runs are not hot-reloaded; restart the worker to pick them up.
+- `loom routines run <id>` triggers one run immediately through the same path; on a disabled routine it fails with `routine is disabled`.
+- Pending records live at `<LOOM_DATA_DIR>/approvals/pending.json`; every trigger and every approve or reject lands in the audit log.
+
+例程与审批：例程是一条带 cron 计划的已保存提示词。每次触发都走与聊天相同的编译后 LangGraph 图，审批闸对例程与人工输入一视同仁。调度只是开始时间、不是放行：例程碰到副作用工具时会写入待批队列并停下，在人执行 `loom approvals approve` 之前不落盘任何东西。`loom routines add|list|run|remove` 管理例程（对已停用例程执行 run 会报 `routine is disabled`），`loom approvals list|approve|reject` 处理待批项，队列在 `<LOOM_DATA_DIR>/approvals/pending.json`；触发与审批决策都写入审计日志。常驻 `loom worker` 按计划触发例程；worker 启动后新增的例程不会热加载，需要重启 worker 才会生效。上面两条可直接粘贴的示例：每日 08:30 只读统计沙箱文件数（直接执行），每日 09:00 整理沙箱（进待批队列等审批）。
 
 ## Docs
 

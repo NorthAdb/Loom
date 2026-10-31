@@ -1,24 +1,29 @@
-"""Command line entry points: loom version, loom doctor, loom chat."""
+"""Command line entry points: loom version, doctor, chat, routines, approvals, worker."""
 
 import argparse
 import logging
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Callable, Sequence
+from functools import partial
 from pathlib import Path
 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
 import loom
 from loom.config import ConfigError, Settings, get_settings
-from loom.graph import build_graph
-from loom.llm import make_model
 from loom.logging import set_run_id, setup_logging
+from loom.pending import PENDING, PendingStore
+from loom.routines import Routine, RoutineStore
+from loom.runner import resume_pending, run_routine
+from loom.runtime import open_graph
 
 logger = logging.getLogger("loom")
 
@@ -134,11 +139,7 @@ def chat_session(graph, thread_id: str, read: Callable[[str], str], emit: Callab
 def _chat(thread_id: str | None, read: Callable[[str], str] = input, emit: Callable[[str], None] = print) -> int:
     settings = get_settings()
     setup_logging(settings)
-    model = make_model(settings)
-    ckpt_dir = Path(settings.loom_data_dir) / "checkpoints"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    with SqliteSaver.from_conn_string(ckpt_dir / "threads.sqlite") as checkpointer:
-        graph = build_graph(model, settings, checkpointer)
+    with open_graph(settings) as graph:
         session_id = thread_id or uuid.uuid4().hex
         emit(f"thread {session_id}")
         emit("type a message; side-effect tools pause for approve/reject; 'quit' exits")
@@ -150,6 +151,130 @@ def _chat(thread_id: str | None, read: Callable[[str], str] = input, emit: Calla
     return 0
 
 
+def _routine_line(routine: Routine) -> str:
+    return (
+        f"{routine.id}  enabled={str(routine.enabled).lower()}  cron='{routine.cron}'"
+        f"  last_status={routine.last_status or '-'}  last_run_at={routine.last_run_at or '-'}"
+    )
+
+
+def _routines_add(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    store = RoutineStore(settings.loom_data_dir)
+    routine = Routine(id=args.id, name=args.name, cron=args.cron, prompt=args.prompt)
+    try:
+        stored = store.add(routine)
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 1
+    print(f"added routine {stored.id}: cron='{stored.cron}' enabled={str(stored.enabled).lower()}")
+    return 0
+
+
+def _routines_list(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    routines = RoutineStore(settings.loom_data_dir).load()
+    if not routines:
+        print("(none)")
+        return 0
+    for routine in routines:
+        print(_routine_line(routine))
+    return 0
+
+
+def _routines_remove(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    try:
+        removed = RoutineStore(settings.loom_data_dir).remove(args.id)
+    except KeyError as exc:
+        print(f"error: {exc.args[0]}")
+        return 1
+    print(f"removed routine {removed.id}")
+    return 0
+
+
+def _routines_run(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    setup_logging(settings)
+    store = RoutineStore(settings.loom_data_dir)
+    pending = PendingStore(settings.loom_data_dir)
+    try:
+        routine = store.get(args.id)
+    except KeyError as exc:
+        print(f"error: {exc.args[0]}")
+        return 1
+    try:
+        outcome = run_routine(routine, settings, store, pending)
+    except (ConfigError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 1
+    print(f"thread {outcome.thread_id}")
+    if outcome.outcome == PENDING:
+        print(f"waiting for approval: {outcome.pending_id}")
+        print(f"resolve with: loom approvals approve {outcome.pending_id}  or  loom approvals reject {outcome.pending_id}")
+    else:
+        print(outcome.answer)
+        print("completed")
+    return 0
+
+
+def _approvals_list(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    waiting = PendingStore(settings.loom_data_dir).list_pending()
+    if not waiting:
+        print("(none)")
+        return 0
+    for record in waiting:
+        tools = ", ".join(item["name"] for item in record.tools)
+        print(f"{record.pending_id}  routine={record.routine_id}  tools=[{tools}]  created={record.created_at}")
+    return 0
+
+
+def _approvals_decide(args: argparse.Namespace, decision: str) -> int:
+    settings = get_settings()
+    setup_logging(settings)
+    pending = PendingStore(settings.loom_data_dir)
+    try:
+        outcome = resume_pending(args.pending_id, decision, settings, pending)
+    except (ConfigError, KeyError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc.args[0] if isinstance(exc, KeyError) else exc}")
+        return 1
+    if outcome.outcome == PENDING:
+        print("still pending: the run asked for approval of further side effects")
+        print(f"resolve with: loom approvals approve {args.pending_id}  or  loom approvals reject {args.pending_id}")
+    else:
+        print(outcome.answer)
+    return 0
+
+
+def _worker(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    setup_logging(settings)
+    store = RoutineStore(settings.loom_data_dir)
+    pending = PendingStore(settings.loom_data_dir)
+    routines = [routine for routine in store.load() if routine.enabled]
+    scheduler = BackgroundScheduler()
+    for routine in routines:
+        scheduler.add_job(
+            run_routine,
+            trigger=CronTrigger.from_crontab(routine.cron),
+            args=[routine, settings, store, pending],
+            id=routine.id,
+        )
+    scheduler.start()
+    print(f"worker started: {len(routines)} routine(s) scheduled; Ctrl-C stops")
+    print("routines added while the worker runs are not hot-reloaded; restart the worker to load them")
+    try:
+        while True:
+            time.sleep(1)
+    except (EOFError, KeyboardInterrupt):
+        pass
+    finally:
+        scheduler.shutdown(wait=False)
+    print("worker stopped")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="loom", description="Loom personal agent CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -157,15 +282,60 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers.add_parser("doctor", help="Check the local environment.")
     chat_parser = subparsers.add_parser("chat", help="Chat with the agent.")
     chat_parser.add_argument("--thread-id", help="Resume an existing thread from its checkpoint.")
+
+    routines_parser = subparsers.add_parser("routines", help="Manage scheduled routines.")
+    routines_sub = routines_parser.add_subparsers(dest="routines_command", required=True)
+    add_parser = routines_sub.add_parser("add", help="Register a routine (cron is a 5-field crontab).")
+    add_parser.add_argument("--id", required=True, help="Unique slug, e.g. daily_sandbox_stats.")
+    add_parser.add_argument("--name", required=True, help="Human-readable name.")
+    add_parser.add_argument("--cron", required=True, help="5-field crontab: 'M H DOM MON DOW'.")
+    add_parser.add_argument("--prompt", required=True, help="Prompt sent to the graph on every fire.")
+    routines_sub.add_parser("list", help="List routines.")
+    remove_parser = routines_sub.add_parser("remove", help="Delete one routine by id.")
+    remove_parser.add_argument("id")
+    run_parser = routines_sub.add_parser("run", help="Trigger one routine run now, through the shared graph.")
+    run_parser.add_argument("id")
+
+    approvals_parser = subparsers.add_parser("approvals", help="Handle pending routine approvals.")
+    approvals_sub = approvals_parser.add_subparsers(dest="approvals_command", required=True)
+    approvals_sub.add_parser("list", help="List pending approvals.")
+    approve_parser = approvals_sub.add_parser("approve", help="Approve a pending run and resume it.")
+    approve_parser.add_argument("pending_id")
+    reject_parser = approvals_sub.add_parser("reject", help="Reject a pending run.")
+    reject_parser.add_argument("pending_id")
+
+    subparsers.add_parser(
+        "worker",
+        help="Run enabled routines on their cron schedule; new routines are not hot-reloaded.",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "version":
         print(loom.__version__)
         return 0
     if args.command == "chat":
-        try:
-            return _chat(args.thread_id)
-        except ConfigError as exc:
-            print(f"config error: {exc}")
-            return 1
-    return _doctor()
+        command: Callable[[argparse.Namespace], int] = partial(_chat, args.thread_id)
+    elif args.command == "routines":
+        handlers = {
+            "add": _routines_add,
+            "list": _routines_list,
+            "remove": _routines_remove,
+            "run": _routines_run,
+        }
+        command = handlers[args.routines_command]
+    elif args.command == "approvals":
+        if args.approvals_command == "list":
+            command = _approvals_list
+        else:
+            decision = "approve" if args.approvals_command == "approve" else "reject"
+            command = partial(_approvals_decide, decision=decision)
+    elif args.command == "worker":
+        command = _worker
+    else:
+        return _doctor()
+
+    try:
+        return command(args)
+    except ConfigError as exc:
+        print(f"config error: {exc}")
+        return 1

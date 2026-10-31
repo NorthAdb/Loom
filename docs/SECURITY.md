@@ -29,7 +29,7 @@ A human approves side effects before they happen. Side effects include:
 - Browser actions that submit, click through a commit, or otherwise change remote state
 - Any new tool that mutates an external system
 
-Scheduled routines use the same gate. A schedule is a start time, not permission.
+Scheduled routines use the same gate. A schedule is a start time, not permission. An unattended routine run that reaches the gate persists a pending record in `<data dir>/approvals/pending.json` and stops before anything executes. A person resolves it explicitly with `loom approvals approve` or `loom approvals reject`; the worker has no auto-approve mode.
 
 Filling a browser form may proceed up to the point of confirmation. The confirm is a person, not the model approving itself.
 
