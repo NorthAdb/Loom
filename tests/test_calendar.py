@@ -76,6 +76,19 @@ def test_summarize_empty_range_is_friendly():
     assert summarize([], "today") == "Nothing scheduled for today."
 
 
+def test_degenerate_all_day_event_still_renders_one_day():
+    ics = (
+        b"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//loom//test//EN\n"
+        b"BEGIN:VEVENT\nUID:x@loom\nDTSTART;VALUE=DATE:20261104\nDTEND;VALUE=DATE:20261104\n"
+        b"SUMMARY:Zero-length all day\nEND:VEVENT\nEND:VCALENDAR\n"
+    )
+
+    events = parse_events(ics, WINDOW_START, WINDOW_END, TZ)
+
+    assert events[0]["all_day"] is True
+    assert "- 2026-11-04 all day: Zero-length all day" in summarize(events, "week")
+
+
 class _ICSHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/missing.ics":

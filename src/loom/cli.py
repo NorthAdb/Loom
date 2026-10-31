@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -18,6 +19,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 import loom
+from loom.calendar import HttpCalendarTransport, redact_url
 from loom.config import ConfigError, Settings, get_settings
 from loom.logging import set_run_id, setup_logging
 from loom.memory import FactsStore, build_semantic_memory
@@ -52,6 +54,23 @@ def _sandbox_reachable(base_url: str) -> bool:
         with urllib.request.urlopen(f"{base_url.rstrip('/')}/health", timeout=2) as response:
             return response.status == 200
     except (OSError, ValueError):
+        return False
+
+
+def _ical_reachable(url: str) -> bool:
+    """One GET of the ICS feed; any transport error means unreachable."""
+    try:
+        HttpCalendarTransport(url, timeout=2).fetch_ics()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _imap_reachable(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            return True
+    except OSError:
         return False
 
 
@@ -105,6 +124,24 @@ def _doctor() -> int:
         print(f"{_OK}LLM_API_KEY present")
     else:
         print(f"{_WARN}LLM_API_KEY not set (loom chat needs it)")
+
+    ical_url = settings.ical_url if settings else os.environ.get("LOOM_ICAL_URL", "")
+    if ical_url:
+        shown = redact_url(ical_url)
+        if _ical_reachable(ical_url):
+            print(f"{_OK}calendar feed {shown}")
+        else:
+            print(f"{_FAIL}calendar feed {shown} (no ICS response; check LOOM_ICAL_URL)")
+            failed = True
+
+    imap_host = settings.imap_host if settings else os.environ.get("LOOM_IMAP_HOST", "")
+    if imap_host:
+        imap_port = settings.imap_port if settings else int(os.environ.get("LOOM_IMAP_PORT") or "993")
+        if _imap_reachable(imap_host, imap_port):
+            print(f"{_OK}imap {imap_host}:{imap_port}")
+        else:
+            print(f"{_FAIL}imap {imap_host}:{imap_port} (no TCP connection; check LOOM_IMAP_HOST and LOOM_IMAP_PORT)")
+            failed = True
 
     return 1 if failed else 0
 

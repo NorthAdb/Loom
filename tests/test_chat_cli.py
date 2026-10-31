@@ -1,8 +1,9 @@
-from conftest import ScriptedChatModel, read_audit, tool_call_msg
+from conftest import FakeMailTransport, ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 
 import loom.cli
 import loom.runtime
+import loom.tools
 from loom.graph import build_graph
 
 
@@ -147,3 +148,36 @@ def test_main_chat_resume_thread_from_checkpoint(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert f"thread {thread_id}" in out
     assert "second answer" in out
+
+
+def test_main_chat_mail_draft_approve_shows_full_text_then_appends(monkeypatch, tmp_path, capsys):
+    """A mail draft through the real main(argv) path: full text in the approval prompt,
+    the IMAP effect only after approve, audit capped even though the payload is not."""
+    import io
+
+    monkeypatch.setenv("LOOM_ENV", "dev")
+    monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("LOOM_MAIL_USER", "owner@example.com")
+    body = "Draft body longer than the audit cap, so truncation would show. " + "detail " * 40
+    scripted = [
+        tool_call_msg("mail_create_draft", {"to": "peer@example.com", "subject": "Plan", "body": body}),
+        AIMessage(content="draft saved"),
+    ]
+    model = ScriptedChatModel(messages=iter(scripted))
+    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: model)
+    mail = FakeMailTransport()
+    monkeypatch.setattr(loom.tools, "build_mail_transport", lambda settings: mail)
+    monkeypatch.setattr("sys.stdin", io.StringIO("write to peer\napprove\nquit\n"))
+
+    code = loom.cli.main(["chat"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "approval needed: mail_create_draft" in out
+    assert "peer@example.com" in out
+    assert body in out, "the approval prompt must show the whole draft body"
+    assert len(mail.appended) == 1
+    assert b"peer@example.com" in mail.appended[0]
+    records = read_audit(tmp_path)
+    assert [record["decision"] for record in records] == ["approved", "executed"]
+    assert body not in records[0]["args"], "audit lines stay capped at 200 chars"

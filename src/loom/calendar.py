@@ -32,8 +32,8 @@ class CalendarTransport(Protocol):
     def fetch_ics(self) -> bytes: ...
 
 
-def _redact_url(url: str) -> str:
-    """The URL for error messages: scheme, host, port, path; never userinfo."""
+def redact_url(url: str) -> str:
+    """The URL for messages: scheme, host, port, path; never userinfo."""
     parts = urlsplit(url)
     host = parts.hostname or ""
     if parts.port:
@@ -53,11 +53,11 @@ class HttpCalendarTransport:
             with urllib.request.urlopen(self._url, timeout=self._timeout) as response:
                 return response.read()
         except urllib.error.HTTPError as exc:
-            raise RuntimeError(f"calendar fetch failed: HTTP {exc.code} from {_redact_url(self._url)}") from exc
+            raise RuntimeError(f"calendar fetch failed: HTTP {exc.code} from {redact_url(self._url)}") from exc
         except OSError as exc:
-            raise RuntimeError(f"calendar feed unreachable at {_redact_url(self._url)} ({exc}); check LOOM_ICAL_URL") from exc
+            raise RuntimeError(f"calendar feed unreachable at {redact_url(self._url)} ({exc}); check LOOM_ICAL_URL") from exc
         except ValueError as exc:
-            raise RuntimeError(f"LOOM_ICAL_URL is not a usable URL: {_redact_url(self._url)}") from exc
+            raise RuntimeError(f"LOOM_ICAL_URL is not a usable URL: {redact_url(self._url)}") from exc
 
 
 def _to_tz(prop, tz: ZoneInfo) -> tuple[datetime, bool]:
@@ -80,11 +80,18 @@ def _to_tz(prop, tz: ZoneInfo) -> tuple[datetime, bool]:
 
 
 def _duration(event, start: datetime, all_day: bool, tz: ZoneInfo) -> timedelta:
-    """The event duration: DTEND (exclusive for all-day), else DURATION, else a day or zero."""
+    """The event duration: DTEND (exclusive for all-day), else DURATION, else a day or zero.
+
+    All-day events whose producer wrote DTEND equal to DTSTART still render as
+    one day, not a zero-length range.
+    """
     dtend = event.get("DTEND")
     if dtend is not None:
         end, _ = _to_tz(dtend, tz)
-        return max(end - start, timedelta(0))
+        duration = end - start
+        if all_day and duration <= timedelta(0):
+            return timedelta(days=1)
+        return max(duration, timedelta(0))
     try:
         return max(event.decoded("duration"), timedelta(0))
     except (KeyError, TypeError, ValueError):

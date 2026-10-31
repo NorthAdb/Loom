@@ -6,6 +6,10 @@ def _run_doctor(capsys):
     return code, capsys.readouterr().out
 
 
+def _env_file(tmp_path, extra=""):
+    return f"LOOM_ENV=dev\nLOOM_DATA_DIR={(tmp_path / 'data').as_posix()}\n" + extra
+
+
 def test_doctor_on_clean_env_fails_and_lists_missing(capsys):
     code, out = _run_doctor(capsys)
 
@@ -69,3 +73,94 @@ def test_doctor_fails_when_configured_sandbox_url_is_unreachable(monkeypatch, ca
     assert code != 0
     assert "sandbox service" in out
     assert "FAIL" in out
+
+
+def test_doctor_skips_calendar_and_imap_lines_when_unset(monkeypatch, capsys, tmp_path):
+    (tmp_path / ".env").write_text(_env_file(tmp_path), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code, out = _run_doctor(capsys)
+
+    assert code == 0
+    assert "calendar feed" not in out
+    assert "imap" not in out
+
+
+def test_doctor_calendar_line_fails_on_unreachable_feed(monkeypatch, capsys, tmp_path):
+    import socket
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    free_port = probe.getsockname()[1]
+    probe.close()
+    (tmp_path / ".env").write_text(
+        _env_file(tmp_path, f"LOOM_ICAL_URL=http://127.0.0.1:{free_port}/feed.ics\n"), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code, out = _run_doctor(capsys)
+
+    assert code != 0
+    assert "calendar feed" in out
+    assert "FAIL" in out
+
+
+def test_doctor_calendar_line_reports_a_serving_feed(monkeypatch, capsys, tmp_path):
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"BEGIN:VCALENDAR\nEND:VCALENDAR\n")
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    (tmp_path / ".env").write_text(
+        _env_file(tmp_path, f"LOOM_ICAL_URL=http://127.0.0.1:{server.server_address[1]}/feed.ics\n"),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    try:
+        code, out = _run_doctor(capsys)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert code == 0
+    assert "ok     calendar feed" in out
+
+
+def test_doctor_imap_line_fails_on_unreachable_host(monkeypatch, capsys, tmp_path):
+    (tmp_path / ".env").write_text(
+        _env_file(tmp_path, "LOOM_IMAP_HOST=127.0.0.1\nLOOM_IMAP_PORT=1\n"), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code, out = _run_doctor(capsys)
+
+    assert code != 0
+    assert "imap 127.0.0.1:1" in out
+    assert "FAIL" in out
+
+
+def test_doctor_imap_line_reports_a_listening_host(monkeypatch, capsys, tmp_path):
+    import socket
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    (tmp_path / ".env").write_text(
+        _env_file(tmp_path, f"LOOM_IMAP_HOST=127.0.0.1\nLOOM_IMAP_PORT={port}\n"), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code, out = _run_doctor(capsys)
+
+    assert code == 0
+    assert f"ok     imap 127.0.0.1:{port}" in out
