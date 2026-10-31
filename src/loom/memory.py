@@ -61,14 +61,27 @@ def _is_plain_word(run: str) -> bool:
     return run.isalpha() and (run.islower() or run.isupper() or run.istitle())
 
 
+def _looks_passwordish(token: str) -> bool:
+    """Whether a password-labeled value reads as a credential, not as prose.
+
+    A digit or a case mix is the credential signature; punctuation and plain
+    words after "password" are sentences ("I forgot my password yesterday").
+    """
+    if _is_plain_word(token):
+        return False
+    return any(ch.isdigit() for ch in token) or (
+        any(ch.isupper() for ch in token) and any(ch.islower() for ch in token)
+    )
+
+
 def looks_like_secret_value(value: str) -> bool:
     """Report whether a facts value carries a secret beyond the chat guard's shapes.
 
     Refuses any token-shaped run of >= 16 ASCII characters (base64/hex/alnum
     shapes) whose Shannon entropy is >= 3.25 bits/char, and any
-    "password xxx" / "passwd: xxx" / "pwd=xxx" shape whose captured value is
-    not a plainly cased word. Plain words, UUID/hex-dash shapes, and URLs
-    (stripped before scanning: their long path slugs are just addresses)
+    "password xxx" / "passwd: xxx" / "pwd=xxx" shape whose captured value
+    itself looks like a credential. Plain words, UUID/hex-dash shapes, and
+    URLs (stripped before scanning: their long path slugs are just addresses)
     never refuse. CJK prose never forms these runs and always passes.
     """
     text = _URL.sub(" ", value)
@@ -77,7 +90,7 @@ def looks_like_secret_value(value: str) -> bool:
             continue
         if _shannon_entropy(run) >= _HIGH_ENTROPY_BITS:
             return True
-    return any(not _is_plain_word(match.group(1)) for match in _PASSWORD_SHAPE.finditer(text))
+    return any(_looks_passwordish(match.group(1)) for match in _PASSWORD_SHAPE.finditer(text))
 
 
 def has_explicit_memory_intent(text: str) -> bool:

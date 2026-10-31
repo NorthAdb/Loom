@@ -178,6 +178,8 @@ def test_facts_value_guard_refuses_secret_shapes(tmp_path, value):
         "straightforwardness",
         "I forgot my password yesterday",
         "(uuid 550e8400-e29b-41d4-a716-446655440000 in the notes)",
+        "my pwd, though, was never saved anywhere",
+        "password required for the staff portal",
     ],
 )
 def test_facts_value_guard_passes_benign_values(tmp_path, value):
