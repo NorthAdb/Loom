@@ -108,7 +108,9 @@ class FakeIMAPClient:
 
     The uid() responses imitate real imaplib shapes: SEARCH returns one space
     separated uid line, FETCH returns a (response-prefix, header-literal) tuple
-    followed by the closing paren.
+    followed by the closing paren. `messages` models the server's mailboxes:
+    UID EXPUNGE drops just that uid, a bare EXPUNGE drops every \\Deleted one,
+    so the tests can see which mail actually survived.
     """
 
     def __init__(
@@ -125,6 +127,7 @@ class FakeIMAPClient:
         self.fetch_message_id = fetch_message_id
         self.store_status = store_status
         self.capabilities = list(capabilities)
+        self.messages = {"7": r"(\Draft)", "9": r"(\Deleted \Seen)"}
 
     def select(self, mailbox):
         self.calls.append(("select", mailbox))
@@ -145,11 +148,15 @@ class FakeIMAPClient:
         if command == "STORE":
             return self.store_status, [b""]
         if command == "EXPUNGE":
+            self.messages.pop(args[0], None)
             return "OK", [args[0]]
         return "BAD", [b"unexpected uid command"]
 
     def expunge(self):
         self.calls.append(("expunge",))
+        self.messages = {
+            uid: flags for uid, flags in self.messages.items() if r"\deleted" not in flags.lower()
+        }
         return "OK", [b""]
 
     def login(self, user, password):
@@ -242,6 +249,7 @@ def test_replace_draft_uid_expunge_targets_only_that_uid_and_other_deleted_mail_
     assert len(expunges) == 1, "UID EXPUNGE must fire once, for the matched uid alone"
     assert not any(call[0] == "expunge" for call in client.calls), "bare EXPUNGE never runs"
     assert not any(call[:2] == ("uid", "EXPUNGE") and call[2] != "7" for call in client.calls)
+    assert client.messages == {"9": r"(\Deleted \Seen)"}, "the old draft is gone, other deleted mail survives"
 
 
 def test_replace_draft_without_uidplus_appends_and_keeps_old(monkeypatch, tmp_path):
@@ -256,6 +264,9 @@ def test_replace_draft_without_uidplus_appends_and_keeps_old(monkeypatch, tmp_pa
     assert _message_id(message) in result
     assert not any(call[:2] == ("uid", "EXPUNGE") for call in client.calls)
     assert ("append", '"Drafts"', r"(\Draft)") in client.calls
+    assert ("uid", "STORE", "7", "+FLAGS.SILENT", r"(\Deleted)") in client.calls, (
+        "without UIDPLUS the old draft is still marked \\Deleted, waiting for the server to expunge it"
+    )
 
 
 def test_replace_draft_aborts_when_store_fails(monkeypatch, tmp_path):

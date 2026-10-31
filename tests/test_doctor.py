@@ -294,3 +294,19 @@ def test_doctor_output_never_contains_ics_secret(monkeypatch, capsys, tmp_path, 
     assert "FAIL" in out and shown in out
     assert secret not in out, "the ICS secret must never reach doctor output"
     assert "Traceback" not in out
+
+
+def test_doctor_calendar_line_never_leaks_userinfo_through_the_real_transport(monkeypatch, capsys, tmp_path):
+    """No stub: a userinfo password with a space trips http.client's InvalidURL
+    before any network call, so this exercises the real transport's redaction."""
+    (tmp_path / ".env").write_text(
+        _env_file(tmp_path, "LOOM_ICAL_URL=http://user:top secret@127.0.0.1:1/x.ics\n"), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code, out = _run_doctor(capsys)
+
+    assert code != 0
+    assert "FAIL" in out and "http://127.0.0.1:1/…" in out
+    assert "top secret" not in out, "the userinfo password must never reach doctor output"
+    assert "Traceback" not in out
