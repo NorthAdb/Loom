@@ -154,7 +154,7 @@ The four tools and the gate:
 | `calendar_list_events` (today / tomorrow / week), `calendar_summarize_range` (ISO dates) | no — fetches and renders only |
 | `mail_create_draft(to, subject, body)`, `mail_update_draft(draft_id, to, subject, body)` | yes — pauses for approval |
 
-A draft pauses with its **full recipient, subject, and body** in the approval prompt; `reject` never touches the IMAP server, and `approve` appends or replaces the draft — it is never sent. Credentials are read from Settings by the transports themselves; they never appear in tool arguments, audit records, or logs (audit argument lines stay capped at 200 characters). 草稿审批会展示完整收件人、主题与正文；reject 时不会调用 IMAP 服务器，approve 后只落草稿、绝不发送；凭证只从配置读取，不进工具参数、审计或日志。
+A draft pauses with its **full recipient, subject, and body** in the approval prompt; `reject` never touches the IMAP server, and `approve` appends or replaces the draft — it is never sent. Credentials are read from Settings by the transports themselves; they never appear in tool arguments, audit records, or logs (an audit record caps each string argument value at 200 characters). 草稿审批会展示完整收件人、主题与正文；reject 时不会调用 IMAP 服务器，approve 后只落草稿、绝不发送；凭证只从配置读取，不进工具参数、审计或日志。
 
 A no-key demo of the whole path (local HTTP ICS feed, scripted model, fake mail transport):
 

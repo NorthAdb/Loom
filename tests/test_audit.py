@@ -52,6 +52,24 @@ def test_long_values_are_capped_and_args_stay_valid_json(tmp_path):
     assert stored["text"] == "x" * 200
 
 
+def test_append_caps_each_string_value_and_the_jsonl_line_stays_short(tmp_path):
+    log = AuditLog(tmp_path)
+
+    log.append(
+        run_id="r1",
+        actor="loom",
+        tool="mail_create_draft",
+        args={"to": "peer@example.com", "subject": "s", "body": "字" * 2500},
+        decision="executed",
+    )
+
+    record = read_audit(tmp_path)[0]
+    stored = json.loads(record["args"])
+    assert all(len(value) <= 200 for value in stored.values()), "the cap applies per string value, not per line"
+    line = raw_text(tmp_path).strip()
+    assert len(line) <= 1200, "capped values keep the whole JSONL line short even for wide alphabets"
+
+
 def test_records_carry_all_six_fields(tmp_path):
     log = AuditLog(tmp_path)
 
