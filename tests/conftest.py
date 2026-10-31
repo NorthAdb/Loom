@@ -29,7 +29,10 @@ def read_audit(data_dir) -> list[dict]:
 def clean_env(monkeypatch, tmp_path):
     """Isolate tests from the host environment and the repository directory."""
     get_settings.cache_clear()
-    for name in ("LOOM_ENV", "LOOM_LOG_LEVEL", "LOOM_DATA_DIR", "LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL"):
+    for name in (
+        "LOOM_ENV", "LOOM_LOG_LEVEL", "LOOM_DATA_DIR", "LOOM_SANDBOX_ROOT", "LOOM_SANDBOX_URL",
+        "LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(tmp_path)
     yield

@@ -4,6 +4,8 @@ import argparse
 import logging
 import os
 import sys
+import urllib.error
+import urllib.request
 import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -39,6 +41,14 @@ def _writable(path: Path) -> bool:
     return True
 
 
+def _sandbox_reachable(base_url: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"{base_url.rstrip('/')}/health", timeout=2) as response:
+            return bool(response) and response.status == 200
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return False
+
+
 def _doctor() -> int:
     failed = False
 
@@ -68,6 +78,21 @@ def _doctor() -> int:
     else:
         print(f"{_FAIL}data dir {data_dir} (cannot create or write)")
         failed = True
+
+    sandbox_url = settings.loom_sandbox_url if settings else os.environ.get("LOOM_SANDBOX_URL", "")
+    if sandbox_url:
+        if _sandbox_reachable(sandbox_url):
+            print(f"{_OK}sandbox service {sandbox_url}")
+        else:
+            print(f"{_FAIL}sandbox service {sandbox_url} (no /health response; try: docker compose up -d --build)")
+            failed = True
+    else:
+        sandbox_root = Path(settings.loom_sandbox_root if settings else os.environ.get("LOOM_SANDBOX_ROOT", "./sandbox"))
+        if _writable(sandbox_root):
+            print(f"{_OK}sandbox root {sandbox_root}")
+        else:
+            print(f"{_FAIL}sandbox root {sandbox_root} (cannot create or write)")
+            failed = True
 
     api_key = settings.llm_api_key if settings else os.environ.get("LLM_API_KEY", "")
     if api_key:

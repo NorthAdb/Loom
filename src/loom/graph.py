@@ -25,7 +25,7 @@ class GraphState(TypedDict):
 def build_graph(model: BaseChatModel, settings: Settings, checkpointer=None):
     """Compile the agent/gate/tools/aborted graph. Long-lived callers pass the
     checkpointer so the connection lifecycle stays with them."""
-    registry = make_tools(settings.loom_data_dir)
+    registry = make_tools(settings)
     audit = AuditLog(settings.loom_data_dir)
     bound = model.bind_tools([spec.func for spec in registry.values()])
 

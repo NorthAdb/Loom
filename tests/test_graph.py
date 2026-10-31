@@ -7,7 +7,7 @@ from loom.graph import build_graph
 
 
 def make_graph(tmp_path, scripted):
-    settings = Settings(loom_env="dev", loom_data_dir=tmp_path)
+    settings = Settings(loom_env="dev", loom_data_dir=tmp_path, loom_sandbox_root=tmp_path / "sandbox")
     model = ScriptedChatModel(messages=iter(scripted))
     return build_graph(model, settings), tmp_path
 
@@ -67,6 +67,44 @@ def test_side_effect_tool_reject_executes_nothing(tmp_path):
     assert "rejected" in final.content
     decisions = [r["decision"] for r in read_audit(data_dir)]
     assert decisions == ["rejected"]
+
+
+def test_sandbox_write_approve_writes_inside_sandbox_root_and_audits(tmp_path):
+    graph, data_dir = make_graph(
+        tmp_path,
+        [tool_call_msg("write_file", {"path": "g.txt", "content": "sandboxed"}), AIMessage(content="file written")],
+    )
+    config = {"configurable": {"thread_id": "t4"}}
+
+    paused = graph.invoke(
+        {"messages": [{"role": "user", "content": "write a file"}], "run_id": "r4"}, config
+    )
+    assert paused["__interrupt__"][0].value["tools"][0]["name"] == "write_file"
+    assert not (data_dir / "sandbox" / "g.txt").exists()
+
+    result = graph.invoke(Command(resume={"decision": "approve"}), config)
+
+    assert (data_dir / "sandbox" / "g.txt").read_text(encoding="utf-8") == "sandboxed"
+    assert result["messages"][-1].content == "file written"
+    decisions = [(r["actor"], r["decision"]) for r in read_audit(data_dir)]
+    assert ("human", "approved") in decisions
+    assert ("loom", "executed") in decisions
+
+
+def test_sandbox_write_reject_writes_nothing(tmp_path):
+    graph, data_dir = make_graph(
+        tmp_path,
+        [tool_call_msg("write_file", {"path": "h.txt", "content": "sandboxed"})],
+    )
+    config = {"configurable": {"thread_id": "t5"}}
+
+    graph.invoke({"messages": [{"role": "user", "content": "write a file"}], "run_id": "r5"}, config)
+    result = graph.invoke(Command(resume={"decision": "reject"}), config)
+
+    assert not (data_dir / "sandbox" / "h.txt").exists()
+    decisions = [r["decision"] for r in read_audit(data_dir)]
+    assert decisions == ["rejected"]
+    assert "rejected" in result["messages"][-1].content
 
 
 def test_new_graph_over_the_same_sqlite_resumes_the_thread(tmp_path):

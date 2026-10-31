@@ -13,6 +13,8 @@ def test_loads_from_environment(monkeypatch):
     assert settings.loom_env == "dev"
     assert settings.loom_log_level == "info"
     assert settings.loom_data_dir == Path("./data")
+    assert settings.loom_sandbox_root == Path("./sandbox")
+    assert settings.loom_sandbox_url == ""
     assert settings.llm_api_key == ""
 
 
