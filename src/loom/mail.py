@@ -123,7 +123,13 @@ class ImapMailTransport:
             self._check(status, "append the replacement draft")
             new_id = _message_id(message_bytes)
             status, _ = client.uid("STORE", uid, "+FLAGS.SILENT", r"(\Deleted)")
-            self._check(status, "mark the old draft deleted")
+            if status != "OK":
+                # The replacement is already on the server, so unlike the steps
+                # before it this failure leaves two drafts behind; say so.
+                raise RuntimeError(
+                    f"IMAP marking the old draft deleted failed ({status}); the replacement draft was appended "
+                    f"but the old draft {old_id} is not deleted, so the drafts folder now contains two copies"
+                )
             if not any(str(cap).upper() == "UIDPLUS" for cap in client.capabilities):
                 return f"{new_id} (the old draft is kept on the server: it does not advertise UIDPLUS)"
             status, _ = client.uid("EXPUNGE", uid)

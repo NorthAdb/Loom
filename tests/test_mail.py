@@ -264,9 +264,11 @@ def test_replace_draft_aborts_when_store_fails(monkeypatch, tmp_path):
     transport = ImapMailTransport(make_settings(tmp_path))
     message = build_draft_message("peer@example.com", "v2", "body", "owner@example.com")
 
-    with pytest.raises(RuntimeError, match="mark the old draft deleted"):
+    with pytest.raises(RuntimeError, match="two copies") as exc_info:
         transport.replace_draft("<old@loom>", message)
 
+    assert "NO" in str(exc_info.value), "the error names the failed IMAP status"
+    assert "appended" in str(exc_info.value), "the error says the replacement is already on the server"
     assert not any(call[:2] == ("uid", "EXPUNGE") for call in client.calls)
 
 
