@@ -2,7 +2,7 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-10-31 (Gate 3 rework).
+Last updated: 2026-11-01 (Gate 3 leftover hardening, first Gate 4 PR).
 
 ## Done
 
@@ -22,6 +22,7 @@ Last updated: 2026-10-31 (Gate 3 rework).
 - [x] Phase 5 calendar + email drafts: read-only calendar summaries (`HttpCalendarTransport` GETs the `LOOM_ICAL_URL` ICS feed — https-only with a loopback exception for tests and demos, 1 MiB body cap, https-only redirects, every failure redacted to scheme and host with no cause chain — `parse_events` clamps to a window in `LOOM_TIMEZONE` (default Asia/Hong_Kong), expands simple RRULEs with a 200-occurrence cap and skips malformed events, `calendar_list_events` today/tomorrow/week and `calendar_summarize_range` tools, side_effect=false), draft-only mail (`mail_create_draft` / `mail_update_draft`, side_effect=true, append with \Draft to `LOOM_MAIL_FOLDER` over IMAP4_SSL with RFC 3501 quoted mailbox names and config validation refusing non-drafts folders (INBOX, leaf Sent/Trash/Junk/Deleted), replacement is UID-only: UID SEARCH hits exactly one message, a fetch verifies its Message-ID and \Draft flag before any write, then append, UID STORE \Deleted, and UID EXPUNGE of that uid only when UIDPLUS is advertised (otherwise the old draft is kept and the result says so), the approval payload shows the full recipient/subject/body (drafts over 10000 chars are refused before approval and audited as rejected) while audit lines stay capped at 200 chars, reject means the IMAP server is never called), gate tests proving the registry flags, no send / calendar-write symbols in `src/loom`, the UID-only IMAP verb allowlist, and no password in tool args, doctor checks for the ICS feed and the IMAP host (with the drafts folder named), demo `scripts/demo_gate3_calendar_mail.py`
 - [x] Calendar read-only summary
 - [x] Email draft-only (no send path)
+- [x] Gate 3 leftover hardening: calendar loopback detection parses IP addresses instead of prefix-matching (127.x lookalike hostnames no longer get plaintext http), `LOOM_MAIL_FOLDER` rejects control characters and a widened non-drafts alias list with trailing separators stripped (INBOX/, INBOX., Sent Mail/Items/Messages, Deleted Items/Messages, Spam, All Mail, Archive), doctor warns when the configured folder does not advertise the `\Drafts` special-use flag (advisory LIST check, never fails), an IMAP login failure survives a server that dropped the connection (logout errors swallowed so only the scrubbed redacted error escapes), draft replacement's STORE failure states that the folder now holds two copies, draft ids are bounded by the RFC 5322 998-character Message-ID line limit, audit docs state the 200-character cap as per string value (the actual behavior, test-pinned), and the facts value guard no longer refuses URLs, UUIDs, plain words, or "I forgot my password yesterday"-style prose while `password: xxx` still refuses credential-shaped values
 
 ## In progress
 
