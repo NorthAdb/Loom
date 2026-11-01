@@ -9,11 +9,13 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 from loom.audit import AuditLog
+from loom.budget import guard_from_settings, turn_tokens
 from loom.config import Settings
 from loom.logging import set_run_id
 from loom.pending import COMPLETED, PENDING, PendingApproval, PendingStore
@@ -27,7 +29,7 @@ logger = logging.getLogger("loom")
 class RunOutcome:
     """What one routine run or resume did; the CLI and demo print from this."""
 
-    outcome: str  # PENDING or COMPLETED
+    outcome: Literal["pending", "completed", "refused"]
     thread_id: str
     pending_id: str = ""
     answer: str = ""
@@ -52,7 +54,7 @@ def run_routine(
     pending: PendingStore,
     graph=None,
 ) -> RunOutcome:
-    """Trigger one routine run; pending when the gate holds the run.
+    """Trigger one routine run; pending when the gate holds the run, refused when the daily token budget is spent.
 
     A run that reaches the approval gate persists a PendingApproval and stops
     without resuming.
@@ -60,6 +62,7 @@ def run_routine(
     if not routine.enabled:
         raise ValueError(f"routine is disabled: {routine.id}")
     audit = AuditLog(settings.loom_data_dir)
+    guard = guard_from_settings(settings, settings.loom_data_dir)
     thread_id = _thread_id(routine.id)
     run_id = uuid.uuid4().hex
     set_run_id(run_id)
@@ -70,10 +73,18 @@ def run_routine(
         args={"routine_id": routine.id, "thread_id": thread_id},
         decision="triggered",
     )
+    if guard is not None and not guard.allow("routine", run_id):
+        logger.warning(
+            "routine run refused by the daily token budget",
+            extra={"routine_id": routine.id, "refusal": guard.refusal_line()},
+        )
+        return RunOutcome("refused", thread_id, answer=guard.refusal_line())
     config = {"configurable": {"thread_id": thread_id}}
 
     def drive(opened) -> RunOutcome:
         result = opened.invoke({"messages": [HumanMessage(content=routine.prompt)], "run_id": run_id}, config)
+        if guard is not None:
+            guard.record("routine", run_id, turn_tokens(result["messages"]))
         if "__interrupt__" in result:
             payload = result["__interrupt__"][0].value
             record = PendingApproval(

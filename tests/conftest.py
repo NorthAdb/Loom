@@ -180,6 +180,7 @@ def clean_env(monkeypatch, tmp_path):
         "LOOM_MEMORY_ENABLED", "LOOM_MEMORY_INJECT_LIMIT", "MEM0_TELEMETRY",
         "LOOM_ICAL_URL", "LOOM_IMAP_HOST", "LOOM_IMAP_PORT", "LOOM_MAIL_USER",
         "LOOM_MAIL_PASSWORD", "LOOM_MAIL_FOLDER", "LOOM_TIMEZONE",
+        "LOOM_DAILY_BUDGET_TOKENS", "LOOM_TOKEN_PRICE_USD_PER_1K",
     ):
         monkeypatch.delenv(name, raising=False)
     # Memory tests inject fakes through the seams; everything else runs with the

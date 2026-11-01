@@ -4,7 +4,21 @@ from langchain_core.messages import AIMessage
 import loom.cli
 import loom.runtime
 import loom.tools
+from loom.audit import AuditLog
+from loom.budget import BudgetGuard, SpendLedger
 from loom.graph import build_graph
+
+
+class CountingGraph:
+    """Fake graph: counts invokes, appends one fixed answer per turn."""
+
+    def __init__(self, answer="ok"):
+        self.answer = answer
+        self.calls = 0
+
+    def invoke(self, state, config):
+        self.calls += 1
+        return {"messages": [*state["messages"], AIMessage(content=self.answer)]}
 
 
 class Reader:
@@ -66,6 +80,47 @@ def test_reject_turn_does_not_execute_and_explains(tmp_path):
     assert lines[-1] == "The proposed action (propose_sandbox_note) was rejected and was not executed."
     assert not (tmp_path / "notes").exists()
     assert audit_decisions(tmp_path) == ["rejected"]
+
+
+def test_refused_turn_names_the_budget_and_never_invokes(tmp_path):
+    ledger = SpendLedger(tmp_path)
+    ledger.record("chat", "seed", 1)
+    guard = BudgetGuard(1, ledger, AuditLog(tmp_path))
+    graph = CountingGraph(answer="should not appear")
+    reader = Reader(["hello", "quit"])
+    lines = []
+
+    loom.cli.chat_session(graph, "t-budget", reader, lines.append, budget=guard)
+
+    assert graph.calls == 0
+    assert lines == ["daily budget exceeded: 1 of 1 tokens used today; not run"]
+
+
+def test_completed_turn_records_its_spend(tmp_path):
+    ledger = SpendLedger(tmp_path)
+    guard = BudgetGuard(100, ledger, AuditLog(tmp_path))
+    graph = CountingGraph()
+    reader = Reader(["hello", "quit"])
+    lines = []
+
+    loom.cli.chat_session(graph, "t-spend", reader, lines.append, budget=guard)
+
+    assert graph.calls == 1
+    assert lines == ["ok"]
+    assert ledger.today_tokens() == 3  # est("hello") = 2, est("ok") = 1
+    assert ledger.runs_today() == {"chat": 1}
+
+
+def test_budget_of_one_brakes_the_second_turn(tmp_path):
+    guard = BudgetGuard(1, SpendLedger(tmp_path), AuditLog(tmp_path))
+    graph = CountingGraph(answer="first")
+    reader = Reader(["one", "two", "quit"])
+    lines = []
+
+    loom.cli.chat_session(graph, "t-one", reader, lines.append, budget=guard)
+
+    assert graph.calls == 1
+    assert lines == ["first", "daily budget exceeded: 3 of 1 tokens used today; not run"]
 
 
 def test_chat_command_builds_the_graph_through_the_cli_factory(monkeypatch, tmp_path):
@@ -181,3 +236,26 @@ def test_main_chat_mail_draft_approve_shows_full_text_then_appends(monkeypatch, 
     records = read_audit(tmp_path)
     assert [record["decision"] for record in records] == ["approved", "executed"]
     assert body not in records[0]["args"], "audit lines stay capped at 200 chars"
+
+
+def test_main_chat_refuses_when_the_budget_is_spent(monkeypatch, tmp_path, capsys):
+    """The guard is wired through _chat: an exhausted budget stops the turn before the model."""
+    import io
+
+    monkeypatch.setenv("LOOM_ENV", "dev")
+    monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("LOOM_DAILY_BUDGET_TOKENS", "1")
+    SpendLedger(tmp_path).record("chat", "seed", 1)
+    monkeypatch.setattr(
+        loom.runtime,
+        "make_model",
+        lambda settings: ScriptedChatModel(messages=iter([AIMessage(content="should not appear")])),
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO("hello\nquit\n"))
+
+    code = loom.cli.main(["chat"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "daily budget exceeded: 1 of 1 tokens used today; not run" in out
+    assert "should not appear" not in out
