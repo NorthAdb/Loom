@@ -1,4 +1,4 @@
-"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, worker, stats."""
+"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, worker, stats, backup, restore."""
 
 import argparse
 import imaplib
@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from functools import partial
@@ -22,6 +23,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 import loom
+from loom.backup import create_backup, restore_backup
 from loom.budget import UNLIMITED_LINE, BudgetGuard, SpendLedger, guard_from_settings, turn_tokens
 from loom.calendar import HttpCalendarTransport, redact_url
 from loom.config import ConfigError, Settings, get_settings
@@ -467,6 +469,27 @@ def _stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _backup(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    archive = create_backup(settings.loom_data_dir, Path(args.destination) if args.destination else Path("backups"))
+    with zipfile.ZipFile(archive) as zf:
+        count = len(zf.namelist())
+    print(f"backup written: {archive} ({count} files)")
+    return 0
+
+
+def _restore(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    try:
+        restored = restore_backup(Path(args.archive), settings.loom_data_dir, overwrite=args.force)
+    except (ValueError, zipfile.BadZipFile) as exc:
+        print(f"error: {exc}")
+        return 1
+    for path in restored:
+        print(path)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="loom", description="Loom personal agent CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -514,6 +537,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     memory_search_parser.add_argument("query", nargs="+")
 
     subparsers.add_parser("stats", help="Print the daily budget, token spend, and audit counters.")
+
+    backup_parser = subparsers.add_parser("backup", help="Zip the five data-dir roots into one archive.")
+    backup_parser.add_argument(
+        "destination", nargs="?", help="Directory for the archive (default: ./backups relative to the current directory)."
+    )
+    restore_parser = subparsers.add_parser("restore", help="Restore a backup archive into the data dir.")
+    restore_parser.add_argument("archive", help="Path to a loom-backup-*.zip archive.")
+    restore_parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing files; without it, any existing target refuses."
+    )
     args = parser.parse_args(argv)
 
     if args.command == "version":
@@ -549,6 +582,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         command = _worker
     elif args.command == "stats":
         command = _stats
+    elif args.command == "backup":
+        command = _backup
+    elif args.command == "restore":
+        command = _restore
     else:
         return _doctor()
 
