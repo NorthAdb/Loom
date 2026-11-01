@@ -4,14 +4,15 @@ from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 
 import loom.runtime
+from loom.budget import SpendLedger
 from loom.config import Settings
 from loom.pending import PendingStore
 from loom.routines import Routine, RoutineStore
 from loom.runner import resume_pending, run_routine
 
 
-def make_settings(tmp_path):
-    return Settings(loom_env="dev", loom_data_dir=tmp_path, loom_sandbox_root=tmp_path / "sandbox")
+def make_settings(tmp_path, **overrides):
+    return Settings(loom_env="dev", loom_data_dir=tmp_path, loom_sandbox_root=tmp_path / "sandbox", **overrides)
 
 
 def make_stores(tmp_path):
@@ -210,3 +211,49 @@ def test_double_resume_raises_already(monkeypatch, tmp_path):
         assert "already" in str(exc)
     else:
         raise AssertionError("double resume did not raise")
+
+
+def test_routine_refused_at_the_budget_limit(monkeypatch, tmp_path):
+    """The refusal returns a result instead of raising, so a scheduler's job survives it."""
+    settings = make_settings(tmp_path, daily_budget_tokens=1)
+    store, pending = make_stores(tmp_path)
+    routine = store.add(Routine(id="daily_stats", name="Stats", cron="30 8 * * *", prompt="count the files"))
+    SpendLedger(tmp_path).record("chat", "seed", 1)
+    # An empty script raises if anything invokes the model, so a pass proves the brake held.
+    monkeypatch.setattr(loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([])))
+
+    outcome = run_routine(routine, settings, store, pending)
+
+    assert outcome.outcome == "refused"
+    assert outcome.answer.endswith("not run")
+    assert "daily budget exceeded" in outcome.answer
+    assert store.get("daily_stats").last_status == ""
+    assert pending.list_pending() == []
+    records = read_audit(tmp_path)
+    assert [record["decision"] for record in records if record["tool"] == "routine_trigger"] == ["triggered"]
+    rejection = [record for record in records if record["decision"] == "rejected"]
+    assert len(rejection) == 1
+    assert (rejection[0]["actor"], rejection[0]["tool"]) == ("loom", "routine")
+    args = json.loads(rejection[0]["args"])
+    assert args["reason"] == "daily budget exceeded"
+    assert (args["today"], args["budget"]) == (1, 1)
+
+
+def test_run_after_a_refusal_goes_through_and_records_spend(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, daily_budget_tokens=1)
+    store, pending = make_stores(tmp_path)
+    routine = store.add(Routine(id="daily_stats", name="Stats", cron="30 8 * * *", prompt="count the files"))
+    SpendLedger(tmp_path).record("chat", "seed", 1)
+    monkeypatch.setattr(loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([])))
+    assert run_routine(routine, settings, store, pending).outcome == "refused"
+
+    monkeypatch.setattr(
+        loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="10 files total")]))
+    )
+    outcome = run_routine(routine, make_settings(tmp_path, daily_budget_tokens=1000), store, pending)
+
+    assert outcome.outcome == "completed"
+    assert outcome.answer == "10 files total"
+    ledger = SpendLedger(tmp_path)
+    assert ledger.runs_total() == {"chat": 1, "routine": 1}
+    assert ledger.today_tokens() > 1  # the seed spend plus the routine's own estimate
