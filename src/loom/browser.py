@@ -22,6 +22,9 @@ from loom.config import Settings
 logger = logging.getLogger("loom")
 
 _RENDER_CAP = 4_000
+_PASSWORD_MASK = "***"
+# autocomplete marks password-bearing controls regardless of their declared type.
+_SENSITIVE_AUTOCOMPLETE = frozenset({"current-password", "new-password"})
 
 
 @dataclass(frozen=True)
@@ -29,7 +32,9 @@ class BrowserField:
     """One form control: programmatic name, human label, kind, and current value.
 
     kind is the control type: text, email, tel, textarea, select, checkbox,
-    hidden, or anything else an input declares.
+    hidden, or anything else an input declares. Password inputs and controls
+    marked current/new-password autocomplete report _PASSWORD_MASK instead of
+    their value ("" when empty), so no page state ever carries a password.
     """
 
     name: str
@@ -274,7 +279,14 @@ class PlaywrightBrowserTransport:
 
     def _field(self, el, kind: str) -> BrowserField:
         name = el.get_attribute("name") or el.get_attribute("id") or ""
-        value = ("true" if el.is_checked() else "false") if kind == "checkbox" else el.input_value()
+        sensitive = kind == "password" or (el.get_attribute("autocomplete") or "").strip().lower() in _SENSITIVE_AUTOCOMPLETE
+        if sensitive:
+            # The page's value never leaves the browser; the mask alone says "filled".
+            value = _PASSWORD_MASK if el.input_value() else ""
+        elif kind == "checkbox":
+            value = "true" if el.is_checked() else "false"
+        else:
+            value = el.input_value()
         return BrowserField(name=name, label=self._label_for(el), kind=kind, value=value)
 
     def _label_for(self, el) -> str:

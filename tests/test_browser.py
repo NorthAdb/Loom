@@ -10,9 +10,12 @@ from typing import ClassVar
 from urllib.parse import parse_qsl
 
 import pytest
-from conftest import FakeBrowserTransport
+from conftest import FakeBrowserTransport, ScriptedChatModel, read_audit, tool_call_msg
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.types import Command
 
 from loom.browser import (
+    _PASSWORD_MASK,
     BrowserField,
     PageState,
     PlaywrightBrowserTransport,
@@ -21,6 +24,7 @@ from loom.browser import (
     render_page_state,
 )
 from loom.config import Settings
+from loom.graph import build_graph
 from loom.tools import make_tools
 
 URL = "http://127.0.0.1:9/form"
@@ -471,6 +475,56 @@ def test_onsubmit_action_rewrite_is_blocked_and_never_accepted(tmp_path, page_si
         transport.close()
 
     assert _posted(page_site) == [], "a blocked submission sends nothing"
+
+
+@requires_chromium
+def test_password_fields_are_masked_in_everything_the_model_sees(tmp_path, page_site, caplog):
+    page_site.pages["/secure.html"] = (
+        "<html><head><title>Secure</title></head><body>"
+        '<form action="/record" method="post">'
+        '<input id="user" name="user" type="text" value="plain-user">'
+        '<input id="pw" name="password" type="password" value="prefilled-secret-1">'
+        '<input id="pw2" name="masked_field" type="text" autocomplete="current-password" value="prefilled-secret-2">'
+        '<input id="pw3" name="empty_pw" type="password">'
+        '<button type="submit">Go</button></form></body></html>'
+    )
+    settings = _settings(tmp_path)
+    transport = PlaywrightBrowserTransport(settings)
+    scripted = [
+        tool_call_msg("browser_open", {"url": page_site.base + "/secure.html"}),
+        tool_call_msg("browser_fill", {"fields": {"password": "typed-secret-3"}}),
+        tool_call_msg("browser_submit", {}),
+        AIMessage(content="form submitted"),
+    ]
+    graph = build_graph(ScriptedChatModel(messages=iter(scripted)), settings, transports={"browser": transport})
+    config = {"configurable": {"thread_id": "secure"}}
+    secrets = ("prefilled-secret-1", "prefilled-secret-2", "typed-secret-3")
+    seen: list[str] = []
+    try:
+        with caplog.at_level(logging.DEBUG):
+            seen.append(render_page_state(transport.open(page_site.base + "/secure.html")))
+            seen.append(render_page_state(transport.fill({"password": "typed-secret-3"})))
+            seen.append(json.dumps(transport.pending_approval()))
+            paused = graph.invoke({"messages": [{"role": "user", "content": "send it"}], "run_id": "sec"}, config)
+            seen.append(json.dumps(paused["__interrupt__"][0].value))
+            result = graph.invoke(Command(resume={"decision": "approve"}), config)
+            seen.extend(m.content for m in result["messages"] if isinstance(m, ToolMessage))
+    finally:
+        transport.close()
+
+    opened = seen[0]
+    assert opened.count(f"= {_PASSWORD_MASK!r}") == 2, "both sensitive controls show the mask"
+    assert "empty_pw [password] ''" in opened, "an empty sensitive control still reads as empty"
+    assert "plain-user" in opened, "non-sensitive values stay readable"
+    assert _PASSWORD_MASK in seen[2], "the approval payload conveys filled state with the mask"
+    for surface in seen:
+        for secret in secrets:
+            assert secret not in surface, f"no password value reaches the model: {secret}"
+    for record in read_audit(tmp_path):
+        for secret in secrets:
+            assert secret not in record["args"], "the audit never records a password value"
+    for secret in secrets:
+        assert secret not in caplog.text, "no log record carries a password value"
 
 
 def test_real_transport_pending_approval_without_a_page_needs_no_browser(tmp_path):
