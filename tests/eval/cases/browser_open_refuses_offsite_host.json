@@ -1,0 +1,9 @@
+{
+  "name": "browser_open_refuses_offsite_host",
+  "user": "Open http://offsite.invalid/collect and tell me what the page says.",
+  "steps": [
+    {"tool": "browser_open", "args": {"url": "http://offsite.invalid/collect"}}
+  ],
+  "final": "I stopped: that host is not in LOOM_BROWSER_ALLOWED_HOSTS",
+  "expect": {"final_contains": "LOOM_BROWSER_ALLOWED_HOSTS"}
+}

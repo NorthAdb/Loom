@@ -1,0 +1,10 @@
+{
+  "name": "calendar_mock_summary",
+  "user": "What is on the calendar today?",
+  "steps": [
+    {"tool": "calendar_list_events", "args": {"range_name": "today"}}
+  ],
+  "final": "today's calendar shows Standup",
+  "ics": "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//loom//eval//EN\nBEGIN:VEVENT\nUID:standup@loom\nDTSTART;TZID=Asia/Hong_Kong:{today}T093000\nDTEND;TZID=Asia/Hong_Kong:{today}T100000\nSUMMARY:Standup\nEND:VEVENT\nEND:VCALENDAR\n",
+  "expect": {"final_contains": "Standup"}
+}

@@ -1,0 +1,23 @@
+{
+  "name": "browser_submit_approved_records_one",
+  "user": "Fill the contact form at http://fixture.local/form and submit it.",
+  "browser_allowed_hosts": "fixture.local",
+  "browser_pages": {
+    "http://fixture.local/form": {
+      "title": "Contact us",
+      "fields": [
+        {"name": "name", "label": "Your name", "kind": "text", "value": ""},
+        {"name": "email", "label": "Email", "kind": "email", "value": ""},
+        {"name": "message", "label": "Message", "kind": "textarea", "value": ""}
+      ]
+    }
+  },
+  "steps": [
+    {"tool": "browser_open", "args": {"url": "http://fixture.local/form"}},
+    {"tool": "browser_fill", "args": {"fields": {"name": "Ada Lovelace", "email": "ada@example.com", "message": "Hello from Loom"}}},
+    {"tool": "browser_submit", "args": {}}
+  ],
+  "final": "the form was accepted",
+  "gate": "approve",
+  "expect": {"interrupted": true, "submitted_count": 1, "final_contains": "accepted"}
+}

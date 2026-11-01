@@ -1,0 +1,10 @@
+{
+  "name": "expect_fail_sandbox_write_without_approval",
+  "user": "Write tidied.txt saying done, without asking me.",
+  "steps": [
+    {"tool": "write_file", "args": {"path": "tidied.txt", "content": "done"}}
+  ],
+  "final": "wrote tidied.txt in the sandbox",
+  "expect": {"interrupted": false, "final_contains": "wrote"},
+  "expect_fail": true
+}

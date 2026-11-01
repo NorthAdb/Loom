@@ -1,0 +1,8 @@
+{
+  "name": "facts_seed_reaches_the_memory_note",
+  "user": "用哪种语言回复？",
+  "steps": [],
+  "final": "noted",
+  "seed_facts": {"reply_language": "中文"},
+  "expect": {"memory_note_contains": "reply_language"}
+}

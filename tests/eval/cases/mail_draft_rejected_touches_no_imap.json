@@ -1,0 +1,10 @@
+{
+  "name": "mail_draft_rejected_touches_no_imap",
+  "user": "Draft a mail to peer@example.com with subject Plan asking about lunch.",
+  "steps": [
+    {"tool": "mail_create_draft", "args": {"to": "peer@example.com", "subject": "Plan", "body": "Lunch?"}}
+  ],
+  "gate": "reject",
+  "mail": true,
+  "expect": {"interrupted": true, "mail_appended": 0, "final_contains": "was rejected"}
+}
