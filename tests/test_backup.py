@@ -1,6 +1,3 @@
-"""loom backup and loom restore: five-roots archives, guarded restore, CLI entry points."""
-
-import gc
 import json
 import shutil
 import zipfile
@@ -17,9 +14,6 @@ from loom.routines import Routine, RoutineStore
 
 
 def _wipe(data_dir):
-    # FactsStore opens a fresh sqlite connection per call and relies on the
-    # garbage collector to close it; force that before Windows lets go of facts.db.
-    gc.collect()
     for root in BACKUP_ROOTS:
         path = data_dir / root
         if path.is_dir():
@@ -29,7 +23,6 @@ def _wipe(data_dir):
 
 
 def _seed(data_dir):
-    """Fill the five roots through their real stores; plain bytes for the checkpoint file."""
     FactsStore(data_dir).upsert("reply_language", "中文")
     FactsStore(data_dir).upsert("operator_name", "Loon")
     RoutineStore(data_dir).add(Routine(id="daily_tidy", name="Daily tidy", cron="0 9 * * *", prompt="Tidy the sandbox."))
