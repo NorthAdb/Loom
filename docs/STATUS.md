@@ -2,7 +2,7 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-11-01 (Phase 7 daily token budget and stats).
+Last updated: 2026-11-01 (Phase 7 backup and restore).
 
 ## Done
 
@@ -29,6 +29,7 @@ Last updated: 2026-11-01 (Phase 7 daily token budget and stats).
 - Note: PR #11's squash commit message reads "…(#10)" (a paste slip at merge time); its content is the Gate 3 leftover hardening recorded above
 - [x] CI: GitHub Actions workflow (`.github/workflows/ci.yml`) running `ruff check src tests` and `pytest -q` on Python 3.11/3.12 for pushes and PRs, plus an advisory pip-audit job (`continue-on-error`, installed inline so the locked dev extra stays untouched); the keyless suite needs no secrets and no browsers in CI (browser tests skip via their availability probe)
 - [x] Phase 7 daily token budget: `LOOM_DAILY_BUDGET_TOKENS` (0 = unlimited) brakes both callers of the graph — a chat turn or routine run the guard refuses is never invoked, emits a one-line refusal naming the budget and today's tokens, and lands an audit rejection row (actor `loom`, tool `chat`/`routine`, decision `rejected`) without touching the routine's status; completed turns/runs append `{"ts", "run_id", "kind", "tokens"}` lines to `<data dir>/spend/YYYY-MM-DD.jsonl` (local date) and no ledger is written at all when unlimited; approval resume turns (`loom approvals approve`) are not budgeted; `loom stats` prints the budget line, today/total tokens with runs by kind and an optional dollar estimate (`LOOM_TOKEN_PRICE_USD_PER_1K`, 0 = no estimate), plus audit counters (approvals approved/rejected, tool executions failed), zero-safe on an empty data dir
+- [x] Phase 7 backup and restore: `loom backup [destination]` zips exactly the five data-dir roots (`facts.db`, `routines.json`, `approvals/`, `audit/`, `checkpoints/`) into `loom-backup-YYYYMMDD-HHMMSS.zip` (local time, collision-safe `-1`/`-2` suffixes, deflated, missing roots simply absent, destination default `./backups` relative to the working directory) and prints the archive path with the member count; `loom restore <archive> [--force]` writes exactly the archive's members back into the data dir and prints each restored path — every member is validated relative and resolved strictly inside the data dir before anything is written, so a crafted archive (`../`, absolute paths) refuses with a ValueError and writes nothing (zip-slip), and existing targets refuse naming the paths unless `--force`; an empty data dir produces a valid empty archive and restores as a no-op; spend ledgers, `memory/`, and `.env` are never in an archive, and `facts.db` is copied as the file stands so a backup should run while Loom is idle (pinned by `tests/test_backup.py`)
 
 ## In progress
 

@@ -15,6 +15,7 @@ import re
 import sqlite3
 import uuid
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -133,11 +134,22 @@ class FactsStore:
     def __init__(self, data_dir: Path) -> None:
         self._path = Path(data_dir) / "facts.db"
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connection(self):
+        """A facts-db connection that commits on success and always closes.
+
+        sqlite3's own `with` only manages the transaction; without an explicit
+        close Windows holds facts.db until garbage collection runs, which
+        blocked tests (and any file-level consumer of the data dir) on GC luck.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._path)
-        conn.execute(_FACTS_SCHEMA)
-        return conn
+        try:
+            conn.execute(_FACTS_SCHEMA)
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
 
     def upsert(self, key: str, value: str, source: str = "human", confidence: float = 1.0) -> Fact:
         """Insert or correct one fact; returns the stored row."""
@@ -147,7 +159,7 @@ class FactsStore:
             raise ValueError(f"refusing to store fact: value for {key!r} looks like an API key or token")
         if looks_like_secret_value(value):
             raise ValueError(f"refusing to store fact: value for {key!r} looks like it carries a secret")
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO facts (id, key, value, source, updated_at, confidence) "
                 "VALUES (?, ?, ?, ?, ?, ?) "
@@ -158,14 +170,14 @@ class FactsStore:
         return self.get(key)
 
     def get(self, key: str) -> Fact | None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT id, key, value, source, updated_at, confidence FROM facts WHERE key = ?", (key,)
             ).fetchone()
         return _row_to_fact(row)
 
     def list(self) -> list[Fact]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT id, key, value, source, updated_at, confidence FROM facts ORDER BY key"
             ).fetchall()
@@ -173,7 +185,7 @@ class FactsStore:
 
     def delete(self, key: str) -> Fact:
         """Remove one fact and return the removed row; KeyError when absent."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT id, key, value, source, updated_at, confidence FROM facts WHERE key = ?", (key,)
             ).fetchone()
