@@ -78,3 +78,10 @@ When a choice changes, add a new ADR with the date and update the docs that woul
 - **Date:** 2026-10-30
 - **Decision:** The repository is the source of truth for what is done and what is not. Docs, especially [STATUS.md](STATUS.md), move in the same change as the work they describe.
 - **Consequences:** A feature is not done because a chat or a roadmap bullet says so. [CONTRIBUTING.md](../CONTRIBUTING.md) requires the status update.
+
+## ADR-011 — Browser fill is native, allowlisted, and gated at submit
+
+- **Status:** Accepted
+- **Date:** 2026-11-01
+- **Decision:** Browser support is a native transport (headless Playwright chromium behind the `browser` extra), the same Settings-built seam as calendar and mail, not an MCP server. `browser_open` and `browser_fill` stay unapproved because they submit nothing; `browser_submit` is the module's single click and its only gated verb. Every url passes the host allowlist — loopback is always allowed, every other host must be listed in `LOOM_BROWSER_ALLOWED_HOSTS` — before the page opens, against the resolved form action before the click, and best-effort on the post-redirect url. The submit approval shows the page's real url and field values read back from the transport (`ToolSpec.approval_context`), not the model's claims.
+- **Consequences:** Filling a page can trigger page-owned traffic (autosave) on allowlisted remote hosts, so keep allowlists narrow. Redirect enforcement is best-effort because the browser follows redirects before any check can run. MCP remains the path for capabilities beyond this surface.

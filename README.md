@@ -4,7 +4,7 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, and the Phase 5 calendar + email drafts are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, tests). Browser fill is not started. See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, the Phase 5 calendar + email drafts, and the Phase 6 browser fill are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, browser fill over headless Playwright chromium where open and fill prepare a page unapproved and submit waits for a human, tests). See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Loom is
 
@@ -147,19 +147,29 @@ Configuration (all in `.env`; a variable left empty disables that feature):
 
 **Mail drafts (IMAP).** Use an app password, not your login password. Gmail: enable 2-Step Verification, then create an app password (Google Account → Security → App passwords) and set `LOOM_IMAP_HOST=imap.gmail.com`. A draft is appended with the `\Draft` flag to `LOOM_MAIL_FOLDER` (`[Gmail]/Drafts` on Gmail); the From address is `LOOM_MAIL_USER`. `LOOM_MAIL_FOLDER` must name a drafts folder: `INBOX` is rejected outright, and so are folders whose last segment is `Sent`, `Trash`, `Junk`, or `Deleted` — config validation fails with a message naming `LOOM_MAIL_FOLDER`. Draft replacement is UID-only: the old draft is found by UID search, confirmed by fetching its header (Message-ID must match exactly and the flags must carry `\Draft`), and only then replaced; without server-side UIDPLUS the old draft stays on the server and the result says so. Gmail 需要 2FA + 应用专用密码，主机填 `imap.gmail.com`，草稿夹用 `[Gmail]/Drafts`；`LOOM_MAIL_FOLDER` 必须是草稿夹（`INBOX` 直接拒绝，末段为 Sent/Trash/Junk/Deleted 的也会被拒绝），替换草稿只按 UID 精确操作，服务器不支持 UIDPLUS 时旧草稿保留并如实提示。
 
-The four tools and the gate:
+The tools and the gate:
 
 | Tool | Side effect |
 | --- | --- |
 | `calendar_list_events` (today / tomorrow / week), `calendar_summarize_range` (ISO dates) | no — fetches and renders only |
+| `browser_open` (url), `browser_fill` (fields) | no — prepares the page, submits nothing |
 | `mail_create_draft(to, subject, body)`, `mail_update_draft(draft_id, to, subject, body)` | yes — pauses for approval |
+| `browser_submit` | yes — pauses for approval |
 
 A draft pauses with its **full recipient, subject, and body** in the approval prompt; `reject` never touches the IMAP server, and `approve` appends or replaces the draft — it is never sent. Credentials are read from Settings by the transports themselves; they never appear in tool arguments, audit records, or logs (an audit record caps each string argument value at 200 characters). 草稿审批会展示完整收件人、主题与正文；reject 时不会调用 IMAP 服务器，approve 后只落草稿、绝不发送；凭证只从配置读取，不进工具参数、审计或日志。
+
+**Browser fill (Playwright).** Install the extra first: `pip install -e ".[browser]"`. `browser_open` navigates (GET only) and `browser_fill` types into the open page; both run without approval because they submit nothing. `browser_submit` is the only click in the codebase and pauses for approval — the prompt shows the page's real url and every field value read back from the browser, not the model's claims. Navigation stays on loopback plus the hosts listed in `LOOM_BROWSER_ALLOWED_HOSTS` (empty means loopback only), checked before navigating and again against the form's action before the submit click. 浏览器代填先装 `pip install -e ".[browser]"`；打开和填写不需要批准（不提交任何内容），`browser_submit` 是代码里唯一的点击、必须人工批准，批准框展示浏览器里真实的 URL 与各字段值；导航仅限回环地址加 `LOOM_BROWSER_ALLOWED_HOSTS`（留空只允许回环），提交前还会校验表单 action 地址。
 
 A no-key demo of the whole path (local HTTP ICS feed, scripted model, fake mail transport):
 
 ```bash
 python scripts/demo_gate3_calendar_mail.py
+```
+
+A no-key demo of the browser path (local form fixture, real headless chromium, scripted model):
+
+```bash
+python scripts/demo_gate4_browser.py
 ```
 
 Example prompts / 示例提示词：

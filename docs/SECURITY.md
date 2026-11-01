@@ -43,6 +43,8 @@ Scheduled routines use the same gate. A schedule is a start time, not permission
 
 Filling a browser form may proceed up to the point of confirmation. The confirm is a person, not the model approving itself.
 
+Browser navigation is a transport boundary: every url must be loopback or listed in `LOOM_BROWSER_ALLOWED_HOSTS` (empty means loopback only), checked before the page opens, against the form's resolved action before the submit click, and best-effort on the url a redirect lands on. The submit approval shows the page's real url and field values read back from the browser, so a person approves what the browser holds, not what the model reports.
+
 ## Files
 
 Local file work stays inside a sandbox on the single host. The boundary is implemented and described in the next section.

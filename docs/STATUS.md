@@ -2,7 +2,7 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
 
-Last updated: 2026-11-01 (Gate 3 leftover hardening, first Gate 4 PR).
+Last updated: 2026-11-01 (Phase 6 browser fill).
 
 ## Done
 
@@ -23,17 +23,15 @@ Last updated: 2026-11-01 (Gate 3 leftover hardening, first Gate 4 PR).
 - [x] Calendar read-only summary
 - [x] Email draft-only (no send path)
 - [x] Gate 3 leftover hardening: calendar loopback detection parses IP addresses instead of prefix-matching (127.x lookalike hostnames no longer get plaintext http), `LOOM_MAIL_FOLDER` rejects control characters and a widened non-drafts alias list with trailing separators stripped (INBOX/, INBOX., Sent Mail/Items/Messages, Deleted Items/Messages, Spam, All Mail, Archive), doctor warns when the configured folder does not advertise the `\Drafts` special-use flag (advisory LIST check, never fails), an IMAP login failure survives a server that dropped the connection (logout errors swallowed so only the scrubbed redacted error escapes), draft replacement's STORE failure states that the folder now holds two copies, draft ids are bounded by the RFC 5322 998-character Message-ID line limit, audit docs state the 200-character cap as per string value (the actual behavior, test-pinned), and the facts value guard no longer refuses URLs, UUIDs, plain words, or "I forgot my password yesterday"-style prose while `password: xxx` still refuses credential-shaped values
+- [x] Phase 6 browser fill: `browser_open` / `browser_fill` / `browser_submit` over a `BrowserTransport` seam (headless Playwright chromium behind the `browser` extra, imported lazily so the registry builds without it) — navigation is GET-only and restricted to loopback plus `LOOM_BROWSER_ALLOWED_HOSTS` (empty = loopback only), checked before `open` navigates, against the resolved form action before `submit` clicks, and best-effort on the post-redirect url; open and fill run without approval (they submit nothing) and return a capped render of the page state; submit is the module's single click, flagged `side_effect`, and the gate shows the page's real url and field values from the transport (`ToolSpec.approval_context`) instead of empty tool args, refusing oversized form state before approval like oversized drafts; gate tests pin the 16-tool registry flags, the single `.click(` in `src/loom/browser.py`, and forbidden playwright verbs (`page.evaluate`, `expect_download`, `api_request`, `page.route`); fixtures/web/form.html plus a POST recorder, demo `scripts/demo_gate4_browser.py` (three scenarios over the real chromium: unapproved fill, approved submit landing exactly one POST, rejected submit landing none)
+- [x] Browser fill
+- [x] Human confirm before browser side effects
 
 ## In progress
 
 - None
 
 ## Not started
-
-### P2 — Browser fill
-
-- [ ] Browser fill
-- [ ] Human confirm before browser side effects
 
 ### P3 — Depth, then more scenarios
 
