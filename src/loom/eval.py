@@ -146,6 +146,11 @@ class CaseResult:
     detail: str
     expect_fail: bool
 
+    @property
+    def met_expectation(self) -> bool:
+        """A normal case meets its expectation by passing; a canary, by judging red."""
+        return self.passed != self.expect_fail
+
 
 @dataclass(frozen=True)
 class EvalSummary:
@@ -162,8 +167,6 @@ class EvalSummary:
 
 
 class ScriptedChatModel(GenericFakeChatModel):
-    """Replays scripted AIMessages in order; bind_tools returns the model itself."""
-
     def bind_tools(self, tools, **kwargs):
         return self
 
@@ -195,7 +198,6 @@ class FakeCalendarTransport:
 
 
 def _masked(fields: tuple[BrowserField, ...]) -> tuple[BrowserField, ...]:
-    """Password fields carry the mask, never the value — the real transport's rule."""
     return tuple(
         replace(f, value=_PASSWORD_MASK) if f.kind == "password" and f.value else f for f in fields
     )
@@ -204,8 +206,9 @@ def _masked(fields: tuple[BrowserField, ...]) -> tuple[BrowserField, ...]:
 class FakeBrowserTransport:
     """Browser transport double: prebuilt pages, fills recorded into field values.
 
-    It enforces the same host allowlist as the real transport (before any page
-    lookup) and masks password fields the same way, so a case like
+    `pages` maps a url to a page spec. It enforces the same host allowlist as
+    the real transport (before any page lookup) and masks password fields the
+    same way on open, fill, and pending_approval, so a case like
     browser_open_refuses_offsite_host never needs playwright and gate payloads
     built on this fake can never carry a plaintext password either.
     """
@@ -222,7 +225,7 @@ class FakeBrowserTransport:
         if page is None:
             raise RuntimeError(f"no fixture page for {url}")
         self.current = (
-            PageState(url=url, title=page, fields=()) if isinstance(page, str) else page
+            PageState(url=url, title=page, fields=()) if isinstance(page, str) else PageState(url=page.url, title=page.title, fields=_masked(page.fields))
         )
         return self.current
 
@@ -320,18 +323,30 @@ def _transports(case: EvalCase, tz: ZoneInfo) -> dict:
 
 
 def _settings(case: EvalCase, data_dir: Path, sandbox_root: Path) -> Settings:
-    # Every env-backed field is explicit so a host .env or environment cannot leak into a case run.
+    # Every env-backed field is explicit so a host .env or environment cannot
+    # leak into a case run (Settings reads both; pytest's clean_env fixture
+    # does not cover `loom eval` runs).
     return Settings(
         loom_env="dev",
+        loom_log_level="info",
         loom_data_dir=data_dir,
         loom_sandbox_root=sandbox_root,
         loom_sandbox_url="",
+        llm_api_key="",
+        llm_model="eval-model",
+        llm_base_url="",
         memory_enabled=False,
+        memory_inject_limit=5,
         ical_url="",
         imap_host="",
+        imap_port=993,
         mail_user="owner@example.com",
+        mail_password="",
+        mail_folder="Drafts",
+        timezone_name="Asia/Hong_Kong",
         browser_allowed_hosts=case.browser_allowed_hosts,
         daily_budget_tokens=0,
+        token_price_usd_per_1k=0.0,
     )
 
 

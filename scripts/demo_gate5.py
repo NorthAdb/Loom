@@ -30,7 +30,6 @@ BUDGET_REJECTED_REASON = "daily budget exceeded"
 
 
 class ScriptedChatModel(GenericFakeChatModel):
-    """Replays scripted AIMessages in order; ignores bound tools."""
 
     def bind_tools(self, tools, **kwargs):
         return self

@@ -507,9 +507,7 @@ def _eval_one_case(name: str) -> int:
         return 1
     result = run_case(wanted[0], EVAL_CASES_DIR)
     print(format_result(result))
-    # One-case mode skips the rate; the case's own verdict decides, and a
-    # canary's verdict is red, not green.
-    return 0 if result.passed != result.expect_fail else 1
+    return 0 if result.met_expectation else 1
 
 
 def _eval(args: argparse.Namespace) -> int:
