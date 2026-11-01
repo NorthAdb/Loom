@@ -27,6 +27,7 @@ Last updated: 2026-11-01 (Phase 6 rework after the Gate 4 review).
 - [x] Browser fill
 - [x] Human confirm before browser side effects
 - Note: PR #11's squash commit message reads "…(#10)" (a paste slip at merge time); its content is the Gate 3 leftover hardening recorded above
+- [x] CI: GitHub Actions workflow (`.github/workflows/ci.yml`) running `ruff check src tests` and `pytest -q` on Python 3.11/3.12 for pushes and PRs, plus an advisory pip-audit job (`continue-on-error`, installed inline so the locked dev extra stays untouched); the keyless suite needs no secrets and no browsers in CI (browser tests skip via their availability probe)
 
 ## In progress
 
