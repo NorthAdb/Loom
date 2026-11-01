@@ -22,7 +22,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 import loom
-from loom.budget import UNLIMITED_LINE, SpendLedger, guard_from_settings, turn_tokens
+from loom.budget import UNLIMITED_LINE, BudgetGuard, SpendLedger, guard_from_settings, turn_tokens
 from loom.calendar import HttpCalendarTransport, redact_url
 from loom.config import ConfigError, Settings, get_settings
 from loom.logging import set_run_id, setup_logging
@@ -193,7 +193,7 @@ def _doctor() -> int:
     return 1 if failed else 0
 
 
-def chat_session(graph, thread_id: str, read: Callable[[str], str], emit: Callable[[str], None], *, budget=None) -> None:
+def chat_session(graph, thread_id: str, read: Callable[[str], str], emit: Callable[[str], None], *, budget: "BudgetGuard | None" = None) -> None:
     """Drive one REPL over a compiled graph: turn, gate approval loop, answer.
 
     With a budget guard, a turn the guard refuses is never invoked, and a

@@ -9,6 +9,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
@@ -28,7 +29,7 @@ logger = logging.getLogger("loom")
 class RunOutcome:
     """What one routine run or resume did; the CLI and demo print from this."""
 
-    outcome: str  # pending, completed, or refused
+    outcome: Literal["pending", "completed", "refused"]
     thread_id: str
     pending_id: str = ""
     answer: str = ""
