@@ -414,7 +414,9 @@ def test_redirect_to_offsite_is_aborted_page_never_lands_offsite(tmp_path, page_
         transport.close()
 
     assert transport._page is None, "a failed navigation leaves no usable page behind"
-    assert transport._blocked == ["http://offsite.invalid/x"], "the firewall aborted the redirect target before send"
+    assert transport._blocked == ["http://offsite.invalid/x"], (
+        "the landing check records and refuses the redirect target: interception does not see redirects"
+    )
     assert _posted(page_site) == []
     message = str(exc_info.value)
     assert "http://offsite.invalid/…" in message and "/x" not in message, "the failure names the redacted url only, never an off-site body"
