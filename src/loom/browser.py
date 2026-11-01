@@ -101,8 +101,7 @@ class PlaywrightBrowserTransport:
     The browser lives for the transport's lifetime; close() ends it.
     """
 
-    # Controls that are buttons, not fillable fields.
-    _SKIP_INPUT_KINDS = frozenset({"submit", "button", "image", "reset"})
+    _BUTTON_INPUT_KINDS = frozenset({"submit", "button", "image", "reset"})
 
     def __init__(self, settings: Settings) -> None:
         self._allowed = _parse_allowed_hosts(settings.browser_allowed_hosts)
@@ -194,7 +193,7 @@ class PlaywrightBrowserTransport:
 
     def _controls(self, page) -> list:
         controls = [(el, (el.get_attribute("type") or "text").lower()) for el in page.locator("input").all()]
-        controls = [(el, kind) for el, kind in controls if kind not in self._SKIP_INPUT_KINDS]
+        controls = [(el, kind) for el, kind in controls if kind not in self._BUTTON_INPUT_KINDS]
         controls += [(el, "textarea") for el in page.locator("textarea").all()]
         controls += [(el, "select") for el in page.locator("select").all()]
         return controls

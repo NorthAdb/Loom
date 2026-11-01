@@ -148,7 +148,6 @@ def build_graph(
             if hit:
                 refused.append((c, *hit))
         if refused:
-            # Refused before approval: no interrupt, nothing executes, and the audit records why.
             for c, _, reason in refused:
                 audit.append(
                     run_id=state.get("run_id", ""),
