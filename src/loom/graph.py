@@ -33,12 +33,39 @@ MEMORY_REFUSAL = (
 _GATE_PAYLOAD_CAP = 2000
 
 _MAIL_DRAFT_TOOLS = {"mail_create_draft", "mail_update_draft"}
-_DRAFT_SIZE_LIMIT = 10_000
+_APPROVAL_SIZE_LIMIT = 10_000
 
 
 def _draft_args_size(args: dict) -> int:
     """Combined length of a draft's to+subject+body, the gate's refusal basis."""
     return sum(len(str(args.get(name, "") or "")) for name in ("to", "subject", "body"))
+
+
+def _refusal_before_approval(name: str, args: dict, has_context: bool) -> tuple[str, dict] | None:
+    """(refusal line, audit reason) when a side-effect call is refused before any human sees it.
+
+    A mail draft is refused when to+subject+body alone exceed the limit. A tool
+    carrying approval_context is refused when its full payload — the context
+    merged over the tool's args, serialized exactly as the human would see it —
+    exceeds the limit, because an approval no human can read is not an approval.
+    """
+    if name in _MAIL_DRAFT_TOOLS and _draft_args_size(args) > _APPROVAL_SIZE_LIMIT:
+        return (
+            (
+                f"Draft refused before approval: to+subject+body exceed the "
+                f"{_APPROVAL_SIZE_LIMIT}-character approval size limit."
+            ),
+            {"reason": "draft exceeds the approval size limit"},
+        )
+    if has_context and len(summarize_args(args, cap=None)) > _APPROVAL_SIZE_LIMIT:
+        return (
+            (
+                f"Refused before approval: the form state exceeds the "
+                f"{_APPROVAL_SIZE_LIMIT}-character approval size limit."
+            ),
+            {"reason": "form state exceeds the approval size limit"},
+        )
+    return None
 
 
 class GraphState(TypedDict):
@@ -110,26 +137,30 @@ def build_graph(
 
     def gate(state: GraphState) -> dict:
         calls = [c for c in _last_tool_calls(state) if (spec := registry.get(c["name"])) and spec.side_effect]
-        oversized = [
-            c for c in calls if c["name"] in _MAIL_DRAFT_TOOLS and _draft_args_size(c["args"]) > _DRAFT_SIZE_LIMIT
-        ]
-        if oversized:
-            # Refused before approval: no interrupt, nothing executes, and the
-            for c in oversized:
+        proposals = []
+        for c in calls:
+            spec = registry[c["name"]]
+            context = spec.approval_context() if spec.approval_context else {}
+            proposals.append((c, {**context, **c["args"]}))
+        refused = []
+        for c, args in proposals:
+            hit = _refusal_before_approval(c["name"], args, registry[c["name"]].approval_context is not None)
+            if hit:
+                refused.append((c, *hit))
+        if refused:
+            # Refused before approval: no interrupt, nothing executes, and the audit records why.
+            for c, _, reason in refused:
                 audit.append(
                     run_id=state.get("run_id", ""),
                     actor="loom",
                     tool=c["name"],
-                    args={"reason": "draft exceeds the approval size limit"},
+                    args=reason,
                     decision="rejected",
                 )
-            c = oversized[0]
+            c, line, _ = refused[0]
             payload = {
                 "tools": [{"name": c["name"], "args": summarize_args(c["args"])}],
-                "refusal": (
-                    f"Draft refused before approval: to+subject+body exceed the "
-                    f"{_DRAFT_SIZE_LIMIT}-character approval size limit."
-                ),
+                "refusal": line,
             }
             return {"approval_status": "rejected", "pending_action": payload}
         payload = {
@@ -137,10 +168,13 @@ def build_graph(
                 {
                     "name": c["name"],
                     "args": summarize_args(
-                        c["args"], cap=_DRAFT_SIZE_LIMIT if c["name"] in _MAIL_DRAFT_TOOLS else _GATE_PAYLOAD_CAP
+                        args,
+                        cap=_APPROVAL_SIZE_LIMIT
+                        if (registry[c["name"]].approval_context or c["name"] in _MAIL_DRAFT_TOOLS)
+                        else _GATE_PAYLOAD_CAP,
                     ),
                 }
-                for c in calls
+                for c, args in proposals
             ],
             "reason": "These tools change state and need human approval.",
         }
