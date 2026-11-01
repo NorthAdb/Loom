@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     mail_password: str = Field(default="", validation_alias="LOOM_MAIL_PASSWORD")
     mail_folder: str = Field(default=_DEFAULT_MAIL_FOLDER, validation_alias="LOOM_MAIL_FOLDER")
     timezone_name: str = Field(default=_DEFAULT_TIMEZONE, validation_alias="LOOM_TIMEZONE")
+    # Raw here on purpose: the browser transport parses the comma-separated host
+    # list, so the allowlist rule and its error message live in one place.
+    browser_allowed_hosts: str = Field(default="", validation_alias="LOOM_BROWSER_ALLOWED_HOSTS")
 
     @field_validator("imap_port", "mail_folder", "timezone_name", mode="before")
     @classmethod
