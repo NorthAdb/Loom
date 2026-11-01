@@ -49,7 +49,9 @@ Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the 
 | Orchestration | LangGraph | Core loop with approval gate |
 | Optional later | Pi as exec / sub-agent | Absent |
 | Memory | Mem0 + self-owned facts/preferences; agentic memory later | Facts table + self-hosted Mem0 baseline |
+| Browser | Playwright (headless chromium) behind the `browser` extra | Browser fill with an allowlisted transport and a human-gated submit |
 | Runtime | Local / single-host Docker | Sandbox service (compose) |
+| CI | GitHub Actions | ruff + pytest on 3.11/3.12, advisory pip-audit |
 | License | MIT | [LICENSE](LICENSE) |
 
 Dependencies are added only when a roadmap item needs them. The current runtime dependencies are pydantic-settings, LangGraph, the LangChain OpenAI integration, APScheduler, mem0ai (self-hosted semantic memory), and icalendar (ICS parsing; brings python-dateutil and tzdata).
@@ -61,7 +63,8 @@ The agent runs: a chat loop over the LangGraph graph with tools, the approval ga
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # macOS/Linux; Windows Git Bash: source .venv/Scripts/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,browser]"
+playwright install chromium      # only needed for browser fill; skip otherwise
 cp .env.example .env             # then edit .env and set LOOM_ENV=dev
 ```
 
@@ -256,11 +259,44 @@ loom worker
 
 例程与审批：例程是一条带 cron 计划的已保存提示词。每次触发都走与聊天相同的编译后 LangGraph 图，审批闸对例程与人工输入一视同仁。调度只是开始时间、不是放行：例程碰到副作用工具时会写入待批队列并停下，在人执行 `loom approvals approve` 之前不落盘任何东西。`loom routines add|list|run|remove` 管理例程（对已停用例程执行 run 会报 `routine is disabled`），`loom approvals list|approve|reject` 处理待批项，队列在 `<LOOM_DATA_DIR>/approvals/pending.json`；触发与审批决策都写入审计日志。常驻 `loom worker` 按计划触发例程；worker 启动后新增的例程不会热加载，需要重启 worker 才会生效。上面两条可直接粘贴的示例：每日 08:30 只读统计沙箱文件数（直接执行），每日 09:00 整理沙箱（进待批队列等审批）。
 
+### Daily operation
+
+The every-day loop, in one place:
+
+```bash
+loom chat                        # the REPL; side-effect tools pause for approve/reject
+loom worker                      # keep routines firing on their cron schedules
+loom approvals list              # resolve anything the gate held while you were away
+loom memory facts                # what Loom firmly knows; `set`/`del` to author it
+loom stats                       # budget, token spend, approval and failure counters
+loom eval                        # regression confidence: cases must stay green, the canary must stay red
+```
+
+Set a spending brake in `.env` before going hands-off: `LOOM_DAILY_BUDGET_TOKENS=200000` refuses new chat turns and routine runs once the day's estimate reaches the line (0 = unlimited), and the refusal lands in the audit log with `decision=rejected`. `LOOM_TOKEN_PRICE_USD_PER_1K` is optional and only turns the `loom stats` token count into a dollars estimate.
+
+预算与日常运维：`LOOM_DAILY_BUDGET_TOKENS` 是每日 token 闸（0 为不限），到达后新的 chat 回合与例程运行都会被拒绝并写入审计（`decision=rejected`）；`loom stats` 汇总预算、用量与审计计数；`loom eval` 跑回归评测，用例必须保持绿、canary 必须保持红。
+
+### Backup and restore
+
+`loom backup [destination]` zips the five data-dir roots — `facts.db`, `routines.json`, `approvals/`, `audit/`, `checkpoints/` — into `loom-backup-<timestamp>.zip` (destination defaults to `./backups`). Nothing else is included: `.env`, spend ledgers, and the semantic-memory store never enter an archive, so a backup cannot become a secrets exfiltration path. Run it while Loom is idle; `facts.db` is captured as the file stands.
+
+`loom restore <archive> [--force]` writes the archive's members back into the data dir. It refuses when a target file already exists unless you pass `--force`, and it refuses any archive member that would land outside the data dir. The drill:
+
+```bash
+loom backup ./backups                                     # 1. archive the current state
+rm -rf "$LOOM_DATA_DIR"/{facts.db,routines.json,approvals,audit,checkpoints}
+loom restore ./backups/loom-backup-<stamp>.zip             # 2. restore after a wipe
+loom memory facts                                          # 3. the facts are back
+```
+
+备份与恢复：`loom backup` 只打包五个数据根（facts.db、routines.json、approvals/、audit/、checkpoints/），`.env`、spend、语义记忆库绝不进包，备份不会成为密钥外带路径；`loom restore` 恢复时目标文件已存在会拒绝（除非 `--force`），并拒绝任何会写到数据目录之外的包成员。请在 Loom 空闲时备份。
+
 ## Docs
 
 - [docs/VISION.md](docs/VISION.md) — vision and boundaries
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target layers
 - [docs/DECISIONS.md](docs/DECISIONS.md) — locked choices
+- [docs/RESUME_STORY.md](docs/RESUME_STORY.md) — what this repository demonstrates, with reproducible numbers
 - [docs/ROADMAP.md](docs/ROADMAP.md) — P0–P3
 - [docs/STATUS.md](docs/STATUS.md) — what the repository actually contains
 - [docs/SECURITY.md](docs/SECURITY.md) — secrets, drafts, approval
