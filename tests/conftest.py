@@ -5,7 +5,14 @@ import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
-from loom.browser import BrowserField, PageState, SubmitOutcome, _ensure_allowed, _parse_allowed_hosts
+from loom.browser import (
+    _PASSWORD_MASK,
+    BrowserField,
+    PageState,
+    SubmitOutcome,
+    _ensure_allowed,
+    _parse_allowed_hosts,
+)
 from loom.config import get_settings
 
 
@@ -53,11 +60,18 @@ class FakeCalendarTransport:
         return self.ics
 
 
+def _masked(fields: tuple[BrowserField, ...]) -> tuple[BrowserField, ...]:
+    """Password fields carry the mask, never the value — the real transport's rule."""
+    return tuple(replace(f, value=_PASSWORD_MASK) if f.kind == "password" and f.value else f for f in fields)
+
+
 class FakeBrowserTransport:
     """Browser transport double: prebuilt pages, fills recorded into field values.
 
     `pages` maps url to a PageState or, for a plain page with no form, a title
-    string. It enforces the same host allowlist as the real transport.
+    string. It enforces the same host allowlist as the real transport and masks
+    password fields the way the real transport does, so gate payloads built on
+    the fake can never carry a plaintext password either.
     """
 
     def __init__(self, pages: dict | None = None, allowed_hosts: str = ""):
@@ -71,7 +85,9 @@ class FakeBrowserTransport:
         page = self.pages.get(url)
         if page is None:
             raise RuntimeError(f"no fixture page for {url}")
-        self.current = PageState(url=url, title=page, fields=()) if isinstance(page, str) else page
+        self.current = (
+            PageState(url=url, title=page, fields=()) if isinstance(page, str) else PageState(url=page.url, title=page.title, fields=_masked(page.fields))
+        )
         return self.current
 
     def fill(self, fields):
@@ -86,8 +102,11 @@ class FakeBrowserTransport:
             )
         self.current = replace(
             self.current,
-            fields=tuple(
-                BrowserField(f.name, f.label, f.kind, str(fields.get(f.name, f.value))) for f in self.current.fields
+            fields=_masked(
+                tuple(
+                    BrowserField(f.name, f.label, f.kind, str(fields.get(f.name, f.value)))
+                    for f in self.current.fields
+                )
             ),
         )
         return self.current
@@ -102,7 +121,7 @@ class FakeBrowserTransport:
     def pending_approval(self) -> dict:
         if self.current is None:
             return {"state": "no page is open"}
-        return {"url": self.current.url, "fields": {f.name: f.value for f in self.current.fields}}
+        return {"url": self.current.url, "fields": {f.name: f.value for f in _masked(self.current.fields)}}
 
 
 # A real ICS feed body: a TZID event, a UTC (Z) event, an all-day event, a

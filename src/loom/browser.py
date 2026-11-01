@@ -1,20 +1,30 @@
 """Browser fill: open a page, read its form, fill it, and submit behind the human gate.
 
 The transport is the boundary. Every url passes the host allowlist before the
-browser moves (loopback is always allowed), fill only types into the
-already-open page, and submit performs this module's single click. A submit
-still waits for the approval gate upstream (docs/VISION.md).
+browser moves (loopback is always allowed), and a request firewall re-checks
+every request the page itself makes — navigation, script, or form — so page
+code can never send one off the allowlist. A page that lands somewhere
+disallowed is closed instead of being shown to the model. Fill only types into
+the already-open page, and submit performs this module's single click. A
+submit still waits for the approval gate upstream (docs/VISION.md).
 """
 
+import logging
 import re
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urljoin, urlsplit
 
-from loom.calendar import _is_loopback  # private sibling import on purpose: one loopback rule for every transport
+from loom.calendar import _is_loopback, redact_url  # one loopback rule and one url redaction rule for every transport
 from loom.config import Settings
 
+logger = logging.getLogger("loom")
+
 _RENDER_CAP = 4_000
+_PASSWORD_MASK = "***"
+# autocomplete marks password-bearing controls regardless of their declared type.
+_SENSITIVE_AUTOCOMPLETE = frozenset({"current-password", "new-password"})
 
 
 @dataclass(frozen=True)
@@ -22,7 +32,9 @@ class BrowserField:
     """One form control: programmatic name, human label, kind, and current value.
 
     kind is the control type: text, email, tel, textarea, select, checkbox,
-    hidden, or anything else an input declares.
+    hidden, or anything else an input declares. Password inputs and controls
+    marked current/new-password autocomplete report _PASSWORD_MASK instead of
+    their value ("" when empty), so no page state ever carries a password.
     """
 
     name: str
@@ -95,10 +107,12 @@ class PlaywrightBrowserTransport:
     """Headless chromium through playwright, started lazily on first use.
 
     playwright is imported only when a page is actually needed, so the registry
-    builds without it. The allowlist is checked before open navigates, before
-    submit clicks, and again on the url a redirect landed on — best-effort for
-    redirects, because chromium follows them on its own before the check runs.
-    The browser lives for the transport's lifetime; close() ends it.
+    builds without it. A route firewall passes every request the page makes
+    through the host allowlist and aborts the rest, so page scripts cannot send
+    anything around the checks that run before open and submit. A navigation
+    that lands off the allowlist closes the page: off-site content is never
+    returned to the model. The browser lives for the transport's lifetime;
+    close() ends it.
     """
 
     _BUTTON_INPUT_KINDS = frozenset({"submit", "button", "image", "reset"})
@@ -108,6 +122,7 @@ class PlaywrightBrowserTransport:
         self._pw = None
         self._browser = None
         self._page = None
+        self._blocked: list[str] = []
 
     def open(self, url: str) -> PageState:
         _ensure_allowed(url, self._allowed)
@@ -115,8 +130,10 @@ class PlaywrightBrowserTransport:
         try:
             page.goto(url)
         except Exception as exc:  # noqa: BLE001 - one readable failure shape for every navigation cause
+            self._page = None
+            page.close()
             raise RuntimeError(f"browser could not open {url}: {type(exc).__name__}") from None
-        _ensure_allowed(page.url, self._allowed)
+        self._ensure_landing_allowed()
         try:
             return self._read_state()
         except Exception as exc:  # noqa: BLE001 - same failure shape while reading the rendered page
@@ -131,21 +148,41 @@ class PlaywrightBrowserTransport:
                 raise ValueError(f"no field named {name!r}; the page has: {', '.join(known) or '(none)'}")
             el, kind = found
             self._set(str(name), el, kind, str(value))
+        self._ensure_landing_allowed()
         return self._read_state()
 
     def submit(self) -> SubmitOutcome:
+        """The module's one click, behind three gates: the url the click will
+        use passes the allowlist before the click, the firewall watches the
+        request the page actually sends, and the landing is re-checked — a
+        blocked submission raises instead of reading as accepted."""
         page = self._require_page()
-        forms = page.locator("form")
-        action = forms.first.get_attribute("action") if forms.count() else ""
-        target = urljoin(page.url, action) if action else page.url
-        _ensure_allowed(target, self._allowed)
         button = self._submit_button(page)
+        _ensure_allowed(self._submit_target(page, button), self._allowed)
+        before = len(self._blocked)
         try:
             button.click()
             page.wait_for_load_state()
         except Exception as exc:  # noqa: BLE001 - one readable failure shape for the gated click
-            raise RuntimeError(f"browser submit failed: {type(exc).__name__}") from None
+            if len(self._blocked) == before:
+                raise RuntimeError(f"browser submit failed: {type(exc).__name__}") from None
+        if len(self._blocked) > before:
+            raise RuntimeError("the form submission was blocked by the host allowlist; nothing was sent")
+        self._ensure_landing_allowed()
         return SubmitOutcome(url=page.url, accepted=True, detail=self._first_line(page))
+
+    def _submit_target(self, page, button) -> str:
+        """The owning form is resolved relative to the control, so an earlier form
+        in the document cannot misdirect the check, and a rewrite the page
+        applies on submit is not visible here — the firewall is the ground
+        truth for what is actually sent.
+        """
+        own = button.get_attribute("formaction")
+        if own:
+            return urljoin(page.url, own)
+        owner = button.locator("xpath=ancestor::form[1]").first
+        action = owner.get_attribute("action") if owner.count() else ""
+        return urljoin(page.url, action) if action else page.url
 
     def pending_approval(self) -> dict:
         """The live page as the gate's approval payload for browser_submit."""
@@ -175,11 +212,49 @@ class PlaywrightBrowserTransport:
             self._pw = sync_playwright().start()
             self._browser = self._pw.chromium.launch(headless=True)
             self._page = self._browser.new_page()
+            self._page.route("**/*", self._firewall)
             self._page.set_default_timeout(10_000)
         except Exception as exc:  # noqa: BLE001 - a half-started browser must read as one launch failure
             self.close()
             raise RuntimeError(f"browser launch failed: {type(exc).__name__}") from None
         return self._page
+
+    def _firewall(self, route) -> None:
+        url = route.request.url
+        try:
+            try:
+                _ensure_allowed(url, self._allowed)
+            except ValueError:
+                self._blocked.append(url)
+                logger.warning("browser request blocked by the host allowlist", extra={"host": redact_url(url)})
+                route.abort("aborted")
+                return
+            route.continue_()
+        except Exception:  # noqa: BLE001 - a route handler must fail closed, never crash the browser
+            with suppress(Exception):  # the request may already be settled
+                route.abort("aborted")
+
+    def _ensure_landing_allowed(self) -> None:
+        """A redirect or script navigation that left the allowlist closes the page; the model sees nothing.
+
+        chromium follows redirect responses in its network stack, before the
+        route firewall can see them, so this check is the only gate on where a
+        navigation actually landed.
+        """
+        page = self._page
+        if page is None:
+            return
+        try:
+            _ensure_allowed(page.url, self._allowed)
+        except ValueError:
+            url = page.url
+            self._blocked.append(url)
+            logger.warning("browser request blocked by the host allowlist", extra={"host": redact_url(url)})
+            self._page = None
+            page.close()
+            raise RuntimeError(
+                f"the browser landed outside the host allowlist at {redact_url(url)}; the page was closed"
+            ) from None
 
     def _require_page(self):
         if self._page is None:
@@ -200,7 +275,14 @@ class PlaywrightBrowserTransport:
 
     def _field(self, el, kind: str) -> BrowserField:
         name = el.get_attribute("name") or el.get_attribute("id") or ""
-        value = ("true" if el.is_checked() else "false") if kind == "checkbox" else el.input_value()
+        sensitive = kind == "password" or (el.get_attribute("autocomplete") or "").strip().lower() in _SENSITIVE_AUTOCOMPLETE
+        if sensitive:
+            # The page's value never leaves the browser; the mask alone says "filled".
+            value = _PASSWORD_MASK if el.input_value() else ""
+        elif kind == "checkbox":
+            value = "true" if el.is_checked() else "false"
+        else:
+            value = el.input_value()
         return BrowserField(name=name, label=self._label_for(el), kind=kind, value=value)
 
     def _label_for(self, el) -> str:
