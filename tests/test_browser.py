@@ -1,9 +1,12 @@
 """Browser module: the host allowlist, page rendering, and both transports."""
 
 import json
+import logging
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
+from typing import ClassVar
 from urllib.parse import parse_qsl
 
 import pytest
@@ -21,6 +24,7 @@ from loom.config import Settings
 from loom.tools import make_tools
 
 URL = "http://127.0.0.1:9/form"
+OFFSITE = "http://offsite.invalid/collect"
 
 
 def form_page() -> PageState:
@@ -286,6 +290,130 @@ def test_real_transport_refuses_an_unlisted_host_before_navigating(tmp_path):
             transport.open("http://dead.host.invalid/form")
     finally:
         transport.close()
+
+
+class _PageSiteHandler(BaseHTTPRequestHandler):
+    """Serves per-path pages (and optional 302 redirects) and records every POST body."""
+
+    pages: ClassVar[dict] = {}
+    redirects: ClassVar[dict] = {}
+    record_path = None
+
+    def do_GET(self):
+        target = self.redirects.get(self.path)
+        if target is not None:
+            self.send_response(302)
+            self.send_header("Location", target)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = self.pages.get(self.path, "<html><body><h1>not found</h1></body></html>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        fields = dict(parse_qsl(self.rfile.read(length).decode("utf-8")))
+        with self.record_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"path": self.path, "fields": fields}) + "\n")
+        body = b"<html><head><title>Done</title></head><body><h1>Submission received</h1></body></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def page_site(tmp_path):
+    """An in-thread site whose pages and redirects each test fills in; POSTs land in a file."""
+    site = SimpleNamespace(pages={}, redirects={}, record_path=tmp_path / "posts.log", base="")
+    handler = type(
+        "_PageSite",
+        (_PageSiteHandler,),
+        {"pages": site.pages, "redirects": site.redirects, "record_path": site.record_path},
+    )
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    site.base = f"http://127.0.0.1:{server.server_address[1]}"
+    yield site
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+
+
+def _posted(page_site) -> list[dict]:
+    if not page_site.record_path.exists():
+        return []
+    return [json.loads(line) for line in page_site.record_path.read_text(encoding="utf-8").splitlines()]
+
+
+@requires_chromium
+def test_oninput_self_submit_to_offsite_host_never_posts(tmp_path, page_site, caplog):
+    page_site.pages["/tricky.html"] = (
+        "<html><head><title>Tricky</title></head><body>"
+        f'<form action="{OFFSITE}" method="post">'
+        '<input id="name" name="name" oninput="this.form.submit()">'
+        '<button type="submit">Go</button></form></body></html>'
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        with caplog.at_level(logging.DEBUG):
+            transport.open(page_site.base + "/tricky.html")
+            render = render_page_state(transport.fill({"name": "Ada Lovelace"}))
+    finally:
+        transport.close()
+
+    assert _posted(page_site) == [], "page scripts must not send a POST off the allowlist during fill"
+    assert transport._blocked == [OFFSITE], "the firewall refuses the request the page script started"
+    assert "offsite.invalid" not in render, "no off-site content reaches the model"
+    blocked_logs = [record for record in caplog.records if "host allowlist" in record.getMessage()]
+    assert blocked_logs, "every blocked request is logged as a warning"
+    for record in blocked_logs:
+        assert "offsite.invalid" in record.host and "/collect" not in record.host, "the log names scheme and host only"
+
+
+@requires_chromium
+def test_onload_self_submit_to_offsite_host_never_posts(tmp_path, page_site):
+    page_site.pages["/auto.html"] = (
+        "<html><head><title>Auto</title></head><body>"
+        f'<form action="{OFFSITE}" method="post"><input name="n" value="v"></form>'
+        "<script>window.onload = () => document.forms[0].submit()</script>"
+        "</body></html>"
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        state = transport.open(page_site.base + "/auto.html")
+    finally:
+        transport.close()
+
+    assert _posted(page_site) == [], "the page's own load handler must not submit off the allowlist"
+    assert state.url == page_site.base + "/auto.html", "the page stays on the allowed origin"
+    assert transport._blocked == [OFFSITE], "the firewall aborts the scripted submit"
+
+
+@requires_chromium
+def test_redirect_to_offsite_is_aborted_page_never_lands_offsite(tmp_path, page_site):
+    page_site.redirects["/away"] = "http://offsite.invalid/x"
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            transport.open(page_site.base + "/away")
+    finally:
+        transport.close()
+
+    assert transport._page is None, "a failed navigation leaves no usable page behind"
+    assert transport._blocked == ["http://offsite.invalid/x"], "the firewall aborted the redirect target before send"
+    assert _posted(page_site) == []
+    message = str(exc_info.value)
+    assert "http://offsite.invalid/…" in message and "/x" not in message, "the failure names the redacted url only, never an off-site body"
 
 
 def test_real_transport_pending_approval_without_a_page_needs_no_browser(tmp_path):

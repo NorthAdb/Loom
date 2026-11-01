@@ -16,8 +16,18 @@ from loom.tools import make_tools
 _SRC = Path(__file__).resolve().parents[1] / "src" / "loom"
 
 # Verbs that would let the browser execute page code, fetch downloads, hit
-# APIs, or intercept traffic: none of them belong on the fill path.
-FORBIDDEN_BROWSER_SYMBOLS = ("page.evaluate", "expect_download", "api_request", "page.route")
+# APIs, rewrite traffic, or grant itself capabilities: none of them belong on
+# the fill path. page.route is absent on purpose: it is the transport's own
+# request firewall, allowed only inside browser.py.
+FORBIDDEN_BROWSER_SYMBOLS = (
+    "page.evaluate",
+    "page.request",
+    "expect_download",
+    "download",
+    "api_request",
+    "set_input_files",
+    "grant_permissions",
+)
 
 
 def browser_source() -> str:
