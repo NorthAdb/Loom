@@ -41,6 +41,7 @@ loom = "loom.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+browser = ["playwright>=1.40"]
 
 [tool.hatch.version]
 path = "src/loom/__init__.py"

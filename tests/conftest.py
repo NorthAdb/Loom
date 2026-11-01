@@ -1,9 +1,11 @@
 import json
+from dataclasses import replace
 
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
+from loom.browser import BrowserField, PageState, SubmitOutcome, _ensure_allowed, _parse_allowed_hosts
 from loom.config import get_settings
 
 
@@ -49,6 +51,58 @@ class FakeCalendarTransport:
 
     def fetch_ics(self) -> bytes:
         return self.ics
+
+
+class FakeBrowserTransport:
+    """Browser transport double: prebuilt pages, fills recorded into field values.
+
+    `pages` maps url to a PageState or, for a plain page with no form, a title
+    string. It enforces the same host allowlist as the real transport.
+    """
+
+    def __init__(self, pages: dict | None = None, allowed_hosts: str = ""):
+        self.pages = pages or {}
+        self.allowed = _parse_allowed_hosts(allowed_hosts)
+        self.current: PageState | None = None
+        self.submitted: list[SubmitOutcome] = []
+
+    def open(self, url):
+        _ensure_allowed(url, self.allowed)
+        page = self.pages.get(url)
+        if page is None:
+            raise RuntimeError(f"no fixture page for {url}")
+        self.current = PageState(url=url, title=page, fields=()) if isinstance(page, str) else page
+        return self.current
+
+    def fill(self, fields):
+        if self.current is None:
+            raise RuntimeError("no page is open; call browser_open first")
+        by_name = {f.name: f for f in self.current.fields}
+        unknown = [name for name in fields if name not in by_name]
+        if unknown:
+            raise ValueError(
+                f"no field(s) named {', '.join(map(repr, unknown))}; "
+                f"the page has: {', '.join(by_name) or '(none)'}"
+            )
+        self.current = replace(
+            self.current,
+            fields=tuple(
+                BrowserField(f.name, f.label, f.kind, str(fields.get(f.name, f.value))) for f in self.current.fields
+            ),
+        )
+        return self.current
+
+    def submit(self):
+        if self.current is None:
+            raise RuntimeError("no page is open; call browser_open first")
+        outcome = SubmitOutcome(url=self.current.url, accepted=True, detail="Submission received")
+        self.submitted.append(outcome)
+        return outcome
+
+    def pending_approval(self) -> dict:
+        if self.current is None:
+            return {"state": "no page is open"}
+        return {"url": self.current.url, "fields": {f.name: f.value for f in self.current.fields}}
 
 
 # A real ICS feed body: a TZID event, a UTC (Z) event, an all-day event, a

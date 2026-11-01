@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact us</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; color: #1c1c1c; }
+  h1 { font-size: 1.4rem; }
+  form { display: grid; gap: 0.75rem; }
+  label { font-weight: 600; font-size: 0.9rem; }
+  input, select, textarea { padding: 0.45rem; border: 1px solid #bbb; border-radius: 4px; font: inherit; width: 100%; box-sizing: border-box; }
+  .inline { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; }
+  .inline input { width: auto; }
+  button { padding: 0.5rem 1rem; border: 0; border-radius: 4px; background: #2563eb; color: #fff; font: inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Contact us</h1>
+<form action="/submit" method="post">
+  <label for="name">Your name</label>
+  <input id="name" name="name" type="text" placeholder="Ada Lovelace" required>
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" placeholder="ada@example.com" required>
+  <label for="topic">Topic</label>
+  <select id="topic" name="topic">
+    <option value="general">General question</option>
+    <option value="support">Support</option>
+    <option value="feedback">Feedback</option>
+  </select>
+  <label for="message">Message</label>
+  <textarea id="message" name="message" rows="4"></textarea>
+  <label class="inline"><input id="subscribe" name="subscribe" type="checkbox"> Subscribe to updates</label>
+  <button type="submit">Send message</button>
+</form>
+</body>
+</html>
