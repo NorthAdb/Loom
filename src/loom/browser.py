@@ -172,10 +172,7 @@ class PlaywrightBrowserTransport:
         return SubmitOutcome(url=page.url, accepted=True, detail=self._first_line(page))
 
     def _submit_target(self, page, button) -> str:
-        """The url clicking this control sends to: its own formaction, else its
-        owning form's action, else this page.
-
-        The owning form is resolved relative to the control, so an earlier form
+        """The owning form is resolved relative to the control, so an earlier form
         in the document cannot misdirect the check, and a rewrite the page
         applies on submit is not visible here — the firewall is the ground
         truth for what is actually sent.
@@ -223,7 +220,6 @@ class PlaywrightBrowserTransport:
         return self._page
 
     def _firewall(self, route) -> None:
-        """Every request the page makes crosses the allowlist; refused ones are recorded, logged, aborted."""
         url = route.request.url
         try:
             try:
