@@ -1,7 +1,8 @@
-"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, worker."""
+"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, worker, stats."""
 
 import argparse
 import imaplib
+import json
 import logging
 import os
 import socket
@@ -21,7 +22,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 import loom
-from loom.budget import guard_from_settings, turn_tokens
+from loom.budget import SpendLedger, UNLIMITED_LINE, guard_from_settings, turn_tokens
 from loom.calendar import HttpCalendarTransport, redact_url
 from loom.config import ConfigError, Settings, get_settings
 from loom.logging import set_run_id, setup_logging
@@ -424,6 +425,48 @@ def _worker(args: argparse.Namespace) -> int:
     return 0
 
 
+def _runs_line(counts: dict[str, int]) -> str:
+    return f"chat={counts.get('chat', 0)}, routine={counts.get('routine', 0)}"
+
+
+def _count_audit_decisions(data_dir: Path) -> dict[str, int]:
+    """Decisions counted across <data dir>/audit/*.jsonl; unreadable files and lines are skipped."""
+    counts = {"approved": 0, "rejected": 0, "failed": 0}
+    for path in sorted((data_dir / "audit").glob("*.jsonl")):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            decision = record.get("decision") if isinstance(record, dict) else None
+            if decision in counts:
+                counts[decision] += 1
+    return counts
+
+
+def _stats(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    data_dir = settings.loom_data_dir
+    ledger = SpendLedger(data_dir)
+    guard = guard_from_settings(settings, data_dir)
+    print(guard.limit_line() if guard else UNLIMITED_LINE)
+    price = settings.token_price_usd_per_1k
+    today = ledger.today_tokens()
+    estimate = f", ${today / 1000 * price:.2f} estimated" if price > 0 else ""
+    print(f"today: {today} tokens{estimate}, runs: {_runs_line(ledger.runs_today())}")
+    print(f"total: {ledger.total_tokens()} tokens, runs: {_runs_line(ledger.runs_total())}")
+    decisions = _count_audit_decisions(data_dir)
+    print(
+        f"audit: approvals approved={decisions['approved']}, rejected={decisions['rejected']}, "
+        f"tool executions failed={decisions['failed']}"
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="loom", description="Loom personal agent CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -469,6 +512,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     facts_del_parser.add_argument("key")
     memory_search_parser = memory_sub.add_parser("search", help="Search the semantic memory store.")
     memory_search_parser.add_argument("query", nargs="+")
+
+    subparsers.add_parser("stats", help="Print the daily budget, token spend, and audit counters.")
     args = parser.parse_args(argv)
 
     if args.command == "version":
@@ -502,6 +547,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             command = facts_actions.get(getattr(args, "facts_command", None), _memory_facts_list)
     elif args.command == "worker":
         command = _worker
+    elif args.command == "stats":
+        command = _stats
     else:
         return _doctor()
 
