@@ -1,4 +1,4 @@
-"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, worker, stats, backup, restore."""
+"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, worker, stats, backup, restore, eval."""
 
 import argparse
 import imaplib
@@ -27,6 +27,7 @@ from loom.backup import create_backup, restore_backup
 from loom.budget import UNLIMITED_LINE, BudgetGuard, SpendLedger, guard_from_settings, turn_tokens
 from loom.calendar import HttpCalendarTransport, redact_url
 from loom.config import ConfigError, Settings, get_settings
+from loom.eval import format_result, format_summary, load_cases, run_case, run_cases
 from loom.logging import set_run_id, setup_logging
 from loom.memory import FactsStore, build_semantic_memory
 from loom.pending import PENDING, PendingStore
@@ -37,6 +38,10 @@ from loom.runtime import open_graph
 logger = logging.getLogger("loom")
 
 _MIN_PYTHON = (3, 11)
+
+# Relative to the working directory, so `loom eval` runs from the repository
+# root; a module constant so tests can point it at a temporary cases dir.
+EVAL_CASES_DIR = Path("tests/eval/cases")
 
 _OK = "ok     "
 _MISSING = "MISSING"
@@ -490,6 +495,36 @@ def _restore(args: argparse.Namespace) -> int:
     return 0
 
 
+def _eval_one_case(name: str) -> int:
+    try:
+        cases = load_cases(EVAL_CASES_DIR)
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 1
+    wanted = [case for case in cases if case.name == name]
+    if not wanted:
+        print(f"error: no eval case named {name!r} under {EVAL_CASES_DIR}")
+        return 1
+    result = run_case(wanted[0], EVAL_CASES_DIR)
+    print(format_result(result))
+    return 0 if result.met_expectation else 1
+
+
+def _eval(args: argparse.Namespace) -> int:
+    if not EVAL_CASES_DIR.is_dir():
+        print(f"eval cases not found at {EVAL_CASES_DIR}; run from the repository root")
+        return 1
+    if args.name:
+        return _eval_one_case(args.name)
+    try:
+        summary = run_cases(EVAL_CASES_DIR)
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 1
+    print(format_summary(summary))
+    return 0 if summary.rate >= 0.8 and summary.canary_ok else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="loom", description="Loom personal agent CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -547,6 +582,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     restore_parser.add_argument(
         "--force", action="store_true", help="Overwrite existing files; without it, any existing target refuses."
     )
+    eval_parser = subparsers.add_parser("eval", help="Run the regression eval cases under tests/eval/cases.")
+    eval_parser.add_argument(
+        "name", nargs="?", help="Run only the case with this name; its own verdict sets the exit code."
+    )
     args = parser.parse_args(argv)
 
     if args.command == "version":
@@ -586,6 +625,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         command = _backup
     elif args.command == "restore":
         command = _restore
+    elif args.command == "eval":
+        command = _eval
     else:
         return _doctor()
 

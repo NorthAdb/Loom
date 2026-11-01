@@ -1,0 +1,11 @@
+{
+  "name": "mail_draft_approved_never_sent",
+  "user": "Draft a mail to peer@example.com with subject Plan asking about lunch.",
+  "steps": [
+    {"tool": "mail_create_draft", "args": {"to": "peer@example.com", "subject": "Plan", "body": "Lunch?"}}
+  ],
+  "final": "the draft is stored in Drafts; it has not been sent",
+  "gate": "approve",
+  "mail": true,
+  "expect": {"interrupted": true, "mail_appended": 1, "final_contains": "has not been sent"}
+}

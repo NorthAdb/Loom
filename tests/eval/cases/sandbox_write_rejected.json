@@ -1,0 +1,9 @@
+{
+  "name": "sandbox_write_rejected",
+  "user": "Write scratch.txt into the sandbox.",
+  "steps": [
+    {"tool": "write_file", "args": {"path": "scratch.txt", "content": "scratch"}}
+  ],
+  "gate": "reject",
+  "expect": {"interrupted": true, "final_contains": "was rejected"}
+}

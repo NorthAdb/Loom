@@ -1,0 +1,10 @@
+{
+  "name": "sandbox_tidy_approved",
+  "user": "Tidy the sandbox: write tidied.txt saying done.",
+  "steps": [
+    {"tool": "write_file", "args": {"path": "tidied.txt", "content": "done"}}
+  ],
+  "final": "wrote tidied.txt in the sandbox",
+  "gate": "approve",
+  "expect": {"interrupted": true, "final_contains": "wrote"}
+}

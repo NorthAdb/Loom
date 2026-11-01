@@ -1,0 +1,8 @@
+{
+  "name": "budget_brake_refuses_the_first_turn",
+  "user": "hello",
+  "steps": [],
+  "final": "hello",
+  "budget_tokens": 1,
+  "expect": {"refused": true, "audit_budget_rejected": true}
+}

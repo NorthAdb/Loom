@@ -1,0 +1,7 @@
+{
+  "name": "budget_unlimited_runs_and_records_nothing",
+  "user": "Say hello.",
+  "steps": [],
+  "final": "hello",
+  "expect": {"refused": false, "spend_recorded": false}
+}
