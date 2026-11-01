@@ -22,7 +22,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 import loom
-from loom.budget import SpendLedger, UNLIMITED_LINE, guard_from_settings, turn_tokens
+from loom.budget import UNLIMITED_LINE, SpendLedger, guard_from_settings, turn_tokens
 from loom.calendar import HttpCalendarTransport, redact_url
 from loom.config import ConfigError, Settings, get_settings
 from loom.logging import set_run_id, setup_logging

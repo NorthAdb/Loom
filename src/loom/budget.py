@@ -4,8 +4,8 @@ The brake sits at the graph's callers (chat REPL, routine runner), never in the
 graph itself: a refused run is never invoked.
 """
 
-from collections.abc import Callable, Iterable
 import json
+from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime
 from pathlib import Path
 
