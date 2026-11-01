@@ -147,18 +147,40 @@ class PlaywrightBrowserTransport:
         return self._read_state()
 
     def submit(self) -> SubmitOutcome:
+        """The module's one click, behind three gates: the url the click will
+        use passes the allowlist before the click, the firewall watches the
+        request the page actually sends, and the landing is re-checked — a
+        blocked submission raises instead of reading as accepted."""
         page = self._require_page()
-        forms = page.locator("form")
-        action = forms.first.get_attribute("action") if forms.count() else ""
-        target = urljoin(page.url, action) if action else page.url
-        _ensure_allowed(target, self._allowed)
         button = self._submit_button(page)
+        _ensure_allowed(self._submit_target(page, button), self._allowed)
+        before = len(self._blocked)
         try:
             button.click()
             page.wait_for_load_state()
         except Exception as exc:  # noqa: BLE001 - one readable failure shape for the gated click
-            raise RuntimeError(f"browser submit failed: {type(exc).__name__}") from None
+            if len(self._blocked) == before:
+                raise RuntimeError(f"browser submit failed: {type(exc).__name__}") from None
+        if len(self._blocked) > before:
+            raise RuntimeError("the form submission was blocked by the host allowlist; nothing was sent")
+        self._ensure_landing_allowed()
         return SubmitOutcome(url=page.url, accepted=True, detail=self._first_line(page))
+
+    def _submit_target(self, page, button) -> str:
+        """The url clicking this control sends to: its own formaction, else its
+        owning form's action, else this page.
+
+        The owning form is resolved relative to the control, so an earlier form
+        in the document cannot misdirect the check, and a rewrite the page
+        applies on submit is not visible here — the firewall is the ground
+        truth for what is actually sent.
+        """
+        own = button.get_attribute("formaction")
+        if own:
+            return urljoin(page.url, own)
+        owner = button.locator("xpath=ancestor::form[1]").first
+        action = owner.get_attribute("action") if owner.count() else ""
+        return urljoin(page.url, action) if action else page.url
 
     def pending_approval(self) -> dict:
         """The live page as the gate's approval payload for browser_submit."""

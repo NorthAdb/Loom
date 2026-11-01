@@ -416,6 +416,63 @@ def test_redirect_to_offsite_is_aborted_page_never_lands_offsite(tmp_path, page_
     assert "http://offsite.invalid/…" in message and "/x" not in message, "the failure names the redacted url only, never an off-site body"
 
 
+@requires_chromium
+def test_submit_refuses_a_formaction_outside_the_allowlist_before_clicking(tmp_path, page_site):
+    page_site.pages["/formaction.html"] = (
+        "<html><head><title>Formaction</title></head><body>"
+        f'<form action="/record" method="post"><input name="n" value="v">'
+        f'<button type="submit" formaction="{OFFSITE}">Go</button></form></body></html>'
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        transport.open(page_site.base + "/formaction.html")
+        with pytest.raises(ValueError, match="LOOM_BROWSER_ALLOWED_HOSTS"):
+            transport.submit()
+    finally:
+        transport.close()
+
+    assert _posted(page_site) == [], "a refused submission must never be clicked"
+
+
+@requires_chromium
+def test_submit_uses_the_form_owning_the_clicked_button(tmp_path, page_site):
+    page_site.pages["/two-forms.html"] = (
+        "<html><head><title>Two forms</title></head><body>"
+        f'<form action="{OFFSITE}" method="post"><input name="a" value="1"></form>'
+        '<form action="/record" method="post"><input name="b" value="2">'
+        '<button type="submit">Go</button></form></body></html>'
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        transport.open(page_site.base + "/two-forms.html")
+        outcome = transport.submit()
+    finally:
+        transport.close()
+
+    posts = _posted(page_site)
+    assert [post["path"] for post in posts] == ["/record"], "the click submits the form that owns the button"
+    assert outcome.accepted is True
+
+
+@requires_chromium
+def test_onsubmit_action_rewrite_is_blocked_and_never_accepted(tmp_path, page_site):
+    page_site.pages["/rewrite.html"] = (
+        "<html><head><title>Rewrite</title></head><body>"
+        f"<form action=\"/record\" method=\"post\" onsubmit=\"this.action='{OFFSITE}'\">"
+        '<input name="n" value="v"><button type="submit">Go</button></form></body></html>'
+    )
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        transport.open(page_site.base + "/rewrite.html")
+        with pytest.raises(RuntimeError, match="blocked by the host allowlist"):
+            transport.submit()
+        assert transport._blocked == [OFFSITE], "the firewall refused the rewritten submission"
+    finally:
+        transport.close()
+
+    assert _posted(page_site) == [], "a blocked submission sends nothing"
+
+
 def test_real_transport_pending_approval_without_a_page_needs_no_browser(tmp_path):
     transport = PlaywrightBrowserTransport(_settings(tmp_path))
 
