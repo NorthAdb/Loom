@@ -1,5 +1,6 @@
 """Tool registry with declared side-effect flags; the approval gate reads the flag."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -7,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from langchain_core.tools import BaseTool, tool
 
+from loom.browser import PlaywrightBrowserTransport, render_page_state
 from loom.calendar import HttpCalendarTransport, parse_events, summarize
 from loom.config import Settings
 from loom.mail import MAIL_NOT_CONFIGURED, ImapMailTransport, MailTransport, build_draft_message
@@ -18,10 +20,16 @@ _RANGES = {"today": (0, 1, "today"), "tomorrow": (1, 2, "tomorrow"), "week": (0,
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """One registered tool and whether it changes state outside the process."""
+    """One registered tool and whether it changes state outside the process.
+
+    `approval_context` is the ground truth the gate shows the human when the
+    tool's own args say nothing: browser_submit has no args, and the page's
+    real state is the thing being approved. It must never raise.
+    """
 
     func: BaseTool
     side_effect: bool
+    approval_context: Callable[[], dict] | None = None
 
 
 @tool
@@ -63,10 +71,12 @@ def build_mail_transport(settings: Settings) -> MailTransport | None:
 def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, ToolSpec]:
     """Build the registry; file tools reach the sandbox through one shared transport.
 
-    `transports` (a mapping with optional "calendar" and "mail" entries) is the
-    test seam, like build_graph's `memory`: a missing entry falls back to the
-    transport built from settings. Unconfigured mail/calendar tools stay in the
-    registry but raise at call time, so the model always sees the full surface.
+    `transports` (a mapping with optional "calendar", "mail", and "browser"
+    entries) is the test seam, like build_graph's `memory`: a missing entry
+    falls back to the transport built from settings. Unconfigured mail/calendar
+    tools stay in the registry but raise at call time, so the model always sees
+    the full surface; the browser transport is always constructible because it
+    imports playwright only when a page is actually needed.
     """
     chosen = transports or {}
     if settings.loom_sandbox_url:
@@ -77,6 +87,7 @@ def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, 
         HttpCalendarTransport(settings.ical_url) if settings.ical_url else None
     )
     mail_transport = chosen.get("mail") or build_mail_transport(settings)
+    browser_transport = chosen.get("browser") or PlaywrightBrowserTransport(settings)
 
     @tool
     def list_dir(path: str = ".") -> str:
@@ -199,6 +210,41 @@ def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, 
         outcome = mail_transport.replace_draft(draft_id, message)
         return f"draft {draft_id} replaced in '{settings.mail_folder}' by {outcome}"
 
+    def _submit_context() -> dict:
+        """The gate's approval payload for browser_submit: the page's real state."""
+        try:
+            return browser_transport.pending_approval()
+        except Exception:  # noqa: BLE001 - the gate's payload read must never crash the interrupt
+            return {"state": "unreadable page"}
+
+    @tool
+    def browser_open(url: str) -> str:
+        """Open a web page and show its fields and current values: read-only navigation, GET only.
+
+        Nothing is filled or submitted here; the render is what the model sees of the page.
+        """
+        return render_page_state(browser_transport.open(url))
+
+    @tool
+    def browser_fill(fields: dict) -> str:
+        """Fill named fields on the already-open page and show the updated state.
+
+        Typing here submits nothing: the form is only prepared, and browser_submit
+        is a separate gated step that waits for human approval.
+        """
+        return render_page_state(browser_transport.fill(fields))
+
+    @tool
+    def browser_submit() -> str:
+        """Submit the form on the already-open page.
+
+        Side effect: pauses for approval. The approval shows the page's real url
+        and field values from the transport, since this tool takes no arguments.
+        """
+        outcome = browser_transport.submit()
+        verdict = "accepted" if outcome.accepted else "not accepted"
+        return f"submit {verdict}: {outcome.detail} ({outcome.url})"
+
     return {
         "get_time": ToolSpec(get_time, side_effect=False),
         "echo": ToolSpec(echo, side_effect=False),
@@ -213,4 +259,7 @@ def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, 
         "calendar_summarize_range": ToolSpec(calendar_summarize_range, side_effect=False),
         "mail_create_draft": ToolSpec(mail_create_draft, side_effect=True),
         "mail_update_draft": ToolSpec(mail_update_draft, side_effect=True),
+        "browser_open": ToolSpec(browser_open, side_effect=False),
+        "browser_fill": ToolSpec(browser_fill, side_effect=False),
+        "browser_submit": ToolSpec(browser_submit, side_effect=True, approval_context=_submit_context),
     }

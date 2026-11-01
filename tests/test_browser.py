@@ -18,6 +18,7 @@ from loom.browser import (
     render_page_state,
 )
 from loom.config import Settings
+from loom.tools import make_tools
 
 URL = "http://127.0.0.1:9/form"
 
@@ -291,3 +292,42 @@ def test_real_transport_pending_approval_without_a_page_needs_no_browser(tmp_pat
     transport = PlaywrightBrowserTransport(_settings(tmp_path))
 
     assert transport.pending_approval() == {"state": "no page is open"}
+
+
+def test_browser_tools_prepare_the_page_without_submitting(tmp_path):
+    fake = FakeBrowserTransport({URL: form_page()})
+    registry = make_tools(_settings(tmp_path), {"browser": fake})
+
+    opened = registry["browser_open"].func.invoke({"url": URL})
+    filled = registry["browser_fill"].func.invoke({"fields": {"name": "Ada Lovelace"}})
+
+    assert opened.splitlines()[0] == f"url: {URL}"
+    assert "'Ada Lovelace'" in filled
+    assert fake.submitted == [], "the prepare tools must never reach submit"
+
+
+def test_browser_submit_tool_runs_the_transport_once(tmp_path):
+    fake = FakeBrowserTransport({URL: form_page()})
+    registry = make_tools(_settings(tmp_path), {"browser": fake})
+
+    registry["browser_open"].func.invoke({"url": URL})
+    result = registry["browser_submit"].func.invoke({})
+
+    assert "accepted" in result and "Submission received" in result
+    assert len(fake.submitted) == 1
+
+
+def test_browser_submit_carries_approval_context_and_the_prepare_tools_carry_none(tmp_path):
+    fake = FakeBrowserTransport({URL: form_page()})
+    registry = make_tools(_settings(tmp_path), {"browser": fake})
+    context = registry["browser_submit"].approval_context
+
+    assert context is not None
+    assert context() == {"state": "no page is open"}
+
+    registry["browser_open"].func.invoke({"url": URL})
+    shown = context()
+
+    assert shown["url"] == URL and shown["fields"]["topic"] == "general"
+    assert registry["browser_open"].approval_context is None
+    assert registry["browser_fill"].approval_context is None
