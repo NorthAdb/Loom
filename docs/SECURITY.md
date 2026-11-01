@@ -43,7 +43,7 @@ Scheduled routines use the same gate. A schedule is a start time, not permission
 
 Filling a browser form may proceed up to the point of confirmation. The confirm is a person, not the model approving itself.
 
-Browser navigation is a transport boundary: every url must be loopback or listed in `LOOM_BROWSER_ALLOWED_HOSTS` (empty means loopback only), checked before the page opens, against the form's resolved action before the submit click, and best-effort on the url a redirect lands on. The submit approval shows the page's real url and field values read back from the browser, so a person approves what the browser holds, not what the model reports.
+Browser navigation is a transport boundary. Every url — the one the tools open, the one a click will use (the control's `formaction`, else its owning form's action), and every request the page itself makes — must be loopback or listed in `LOOM_BROWSER_ALLOWED_HOSTS` (empty means loopback only). A request firewall aborts anything else before it is sent, and a submission it blocks raises instead of ever reading as accepted. Redirect responses are followed by the browser below the interception layer, so a navigation that lands off the allowlist closes the page before the model sees anything; a 307/308 redirect could still re-send a request body before that close, a known limit of the interception layer. Password fields never leave the browser: what the model and the approval see reads `***` (empty when unfilled). The submit approval shows the page's real url and field values read back from the browser, merged over anything the model claims, so a person approves what the browser holds, not what the model reports.
 
 ## Files
 
