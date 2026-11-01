@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     # Raw here on purpose: the browser transport parses the comma-separated host
     # list, so the allowlist rule and its error message live in one place.
     browser_allowed_hosts: str = Field(default="", validation_alias="LOOM_BROWSER_ALLOWED_HOSTS")
+    # 0 (or negative) means unlimited: nothing is refused and no spend is recorded
+    daily_budget_tokens: int = Field(default=0, validation_alias="LOOM_DAILY_BUDGET_TOKENS")
+    # Reporting only (loom stats): today's tokens / 1000 * this price; 0 means no estimate
+    token_price_usd_per_1k: float = Field(default=0.0, validation_alias="LOOM_TOKEN_PRICE_USD_PER_1K")
 
     @field_validator("imap_port", "mail_folder", "timezone_name", mode="before")
     @classmethod
