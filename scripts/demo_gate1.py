@@ -46,7 +46,7 @@ def scenario_harmless(data_dir: Path, model) -> str:
             AIMessage(content="The tool result above holds the current local time."),
         ])
     )
-    graph = build_graph(model or scripted, Settings(loom_env="dev", loom_data_dir=data_dir))
+    graph = build_graph(model or scripted, Settings(loom_env="dev", loom_data_dir=data_dir, memory_enabled=False))
     result = graph.invoke(
         {"messages": [{"role": "user", "content": "what time is it?"}], "run_id": uuid.uuid4().hex},
         config_for("demo-a"),
@@ -67,7 +67,7 @@ def scenario_approve(data_dir: Path, model) -> str:
             AIMessage(content="Note written to the sandbox."),
         ])
     )
-    graph = build_graph(model or scripted, Settings(loom_env="dev", loom_data_dir=data_dir))
+    graph = build_graph(model or scripted, Settings(loom_env="dev", loom_data_dir=data_dir, memory_enabled=False))
     config = config_for("demo-b")
 
     paused = graph.invoke(
@@ -89,7 +89,7 @@ def scenario_reject(data_dir: Path, model) -> str:
     scripted = ScriptedChatModel(
         messages=iter([tool_call_msg("propose_sandbox_note", {"filename": "demo.txt", "content": "nope"}, "call_c1")])
     )
-    graph = build_graph(model or scripted, Settings(loom_env="dev", loom_data_dir=data_dir))
+    graph = build_graph(model or scripted, Settings(loom_env="dev", loom_data_dir=data_dir, memory_enabled=False))
     config = config_for("demo-c")
 
     graph.invoke({"messages": [{"role": "user", "content": "save a demo note"}], "run_id": uuid.uuid4().hex}, config)
@@ -105,7 +105,7 @@ def scenario_reject(data_dir: Path, model) -> str:
 
 
 def main() -> int:
-    settings = Settings(loom_env="dev")
+    settings = Settings(loom_env="dev", memory_enabled=False)
     if settings.llm_api_key:
         model = make_model(settings)
         print("LLM_API_KEY set; using the real chat model")

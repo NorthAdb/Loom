@@ -276,6 +276,20 @@ Set a spending brake in `.env` before going hands-off: `LOOM_DAILY_BUDGET_TOKENS
 
 预算与日常运维：`LOOM_DAILY_BUDGET_TOKENS` 是每日 token 闸（0 为不限），到达后新的 chat 回合与例程运行都会被拒绝并写入审计（`decision=rejected`）；`loom stats` 汇总预算、用量与审计计数；`loom eval` 跑回归评测，用例必须保持绿、canary 必须保持红。
 
+### Demos
+
+Seven keyless demos (scripted models, local fixtures) each prove one path end to end:
+
+```bash
+python scripts/demo_gate1.py                # core loop: harmless tools answer, side effects gate
+python scripts/demo_gate2.py                # sandbox tidy with approved writes
+python scripts/demo_gate2_routines.py       # routine triggers and the pending approval queue
+python scripts/demo_gate3_memory.py         # facts, the memory note, and the explicit write-back
+python scripts/demo_gate3_calendar_mail.py  # calendar summaries and draft gating
+python scripts/demo_gate4_browser.py        # browser fill behind the human gate
+python scripts/demo_gate5.py                # budget brake, backup/restore, eval summary
+```
+
 ### Backup and restore
 
 `loom backup [destination]` zips the five data-dir roots — `facts.db`, `routines.json`, `approvals/`, `audit/`, `checkpoints/` — into `loom-backup-<timestamp>.zip` (destination defaults to `./backups`). Nothing else is included: `.env`, spend ledgers, and the semantic-memory store never enter an archive, so a backup cannot become a secrets exfiltration path. Run it while Loom is idle; `facts.db` is captured as the file stands.

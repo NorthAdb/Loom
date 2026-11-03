@@ -404,7 +404,36 @@ def test_onload_self_submit_to_offsite_host_never_posts(tmp_path, page_site):
 
 
 @requires_chromium
-def test_redirect_to_offsite_is_aborted_page_never_lands_offsite(tmp_path, page_site):
+def test_redirect_to_a_resolvable_offsite_host_is_refused_at_the_landing(tmp_path, page_site):
+    """A resolvable target (RFC 2606 reserved, always resolving) makes the landing
+    deterministic: chromium follows the 302 outside the interception layer, the page
+    url ends on the off-site host, and the landing check refuses it."""
+    page_site.redirects["/away"] = "https://example.com/"
+    transport = PlaywrightBrowserTransport(_settings(tmp_path))
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            transport.open(page_site.base + "/away")
+    finally:
+        transport.close()
+
+    assert transport._page is None, "a refused landing leaves no usable page behind"
+    assert "https://example.com/" in transport._blocked, "the landing check records the off-site url"
+    assert all(entry.startswith("https://example.com") for entry in transport._blocked), (
+        "the block list holds only the refused host's requests (the firewall may also record its subresources)"
+    )
+    assert _posted(page_site) == []
+    message = str(exc_info.value)
+    assert "https://example.com/…" in message, "the failure names the redacted landing url"
+    assert "Example Domain" not in message, "no off-site page content reaches the model"
+    assert "/away" not in message, "neither the original nor the landing url leaks beyond scheme and host"
+
+
+@requires_chromium
+def test_redirect_to_an_unresolvable_host_fails_closed_without_leaking_the_target(tmp_path, page_site):
+    """An unresolvable target behaves differently across chromium builds and network
+    stacks (goto returns with page.url at the target, or raises with the page back on
+    about:blank); either way the refusal holds, the page closes, nothing posts, and the
+    error text is redacted to scheme and host."""
     page_site.redirects["/away"] = "http://offsite.invalid/x"
     transport = PlaywrightBrowserTransport(_settings(tmp_path))
     try:
@@ -414,12 +443,9 @@ def test_redirect_to_offsite_is_aborted_page_never_lands_offsite(tmp_path, page_
         transport.close()
 
     assert transport._page is None, "a failed navigation leaves no usable page behind"
-    assert transport._blocked == ["http://offsite.invalid/x"], (
-        "the landing check records and refuses the redirect target: interception does not see redirects"
-    )
-    assert _posted(page_site) == []
+    assert _posted(page_site) == [], "a refused redirect must never complete a request"
     message = str(exc_info.value)
-    assert "http://offsite.invalid/…" in message and "/x" not in message, "the failure names the redacted url only, never an off-site body"
+    assert "/x" not in message, "the target path never leaks, in any failure shape"
 
 
 @requires_chromium

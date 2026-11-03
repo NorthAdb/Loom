@@ -14,10 +14,10 @@ The core is a LangGraph graph (`src/loom/graph.py`): memory note → agent → g
 
 | Claim | Number | Reproduce with |
 | --- | --- | --- |
-| Test suite | 320 passed, 1 skipped | `pytest -q` |
+| Test suite | 321 passed, 1 skipped with chromium installed (the real-browser tests skip on CI and other browser-less environments) | `pytest -q` |
 | Capabilities behind the gate | 16 registered tools, side-effect flags pinned exactly | `pytest tests/test_gate3_guards.py tests/test_gate4_guards.py -q` |
 | Regression eval | 12 cases, 11 counted + 1 expect_fail canary judged red, 100% counted pass rate | `loom eval` |
-| Demos, all keyless | 6 demo scripts, 19 scenarios, all passing | `python scripts/demo_gate2.py` and the five siblings named in the README |
+| Demos, all keyless | 7 demo scripts, 22 scenarios, all passing | run each `scripts/demo_*.py` |
 | Audit trail | one JSON line per decision with 6 fields (`ts`, `run_id`, `actor`, `tool`, `args`, `decision`) | `pytest tests/test_audit.py -q` |
 | Daily budget brake | refused turn + audit row `reason=daily budget exceeded` at a 1-token limit | `pytest tests/test_budget.py -q` |
 | Recoverability | 5 data-dir roots in a zip; restore refuses archive members that escape the data dir | `pytest tests/test_backup.py -q` |
