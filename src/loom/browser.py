@@ -130,9 +130,11 @@ class PlaywrightBrowserTransport:
         try:
             page.goto(url)
         except Exception as exc:  # noqa: BLE001 - one readable failure shape for every navigation cause
+            failure = self._failed_navigation_error(page, url, str(exc))
             self._page = None
-            page.close()
-            raise RuntimeError(f"browser could not open {url}: {type(exc).__name__}") from None
+            with suppress(Exception):
+                page.close()
+            raise failure from None
         self._ensure_landing_allowed()
         try:
             return self._read_state()
@@ -234,6 +236,17 @@ class PlaywrightBrowserTransport:
             with suppress(Exception):  # the request may already be settled
                 route.abort("aborted")
 
+    def _landing_error(self, url: str) -> RuntimeError | None:
+        try:
+            _ensure_allowed(url, self._allowed)
+        except ValueError:
+            self._blocked.append(url)
+            logger.warning("browser request blocked by the host allowlist", extra={"host": redact_url(url)})
+            return RuntimeError(
+                f"the browser landed outside the host allowlist at {redact_url(url)}; the page was closed"
+            )
+        return None
+
     def _ensure_landing_allowed(self) -> None:
         """A redirect or script navigation that left the allowlist closes the page; the model sees nothing.
 
@@ -244,17 +257,34 @@ class PlaywrightBrowserTransport:
         page = self._page
         if page is None:
             return
-        try:
-            _ensure_allowed(page.url, self._allowed)
-        except ValueError:
-            url = page.url
-            self._blocked.append(url)
-            logger.warning("browser request blocked by the host allowlist", extra={"host": redact_url(url)})
+        url = page.url
+        error = self._landing_error(url)
+        if error is not None:
             self._page = None
             page.close()
-            raise RuntimeError(
-                f"the browser landed outside the host allowlist at {redact_url(url)}; the page was closed"
-            ) from None
+            raise error from None
+
+    def _failed_navigation_error(self, page, original_url: str, exc: Exception) -> RuntimeError:
+        """The refusal for a navigation whose goto raised, refusing an off-allowlist target when one is named.
+
+        Whether chromium reports a redirect to an unresolvable host by raising
+        (page back on about:blank) or by returning with page.url at the target
+        differs across builds and network stacks; the landing refusal must hold
+        either way. The raise carries the target url in its text, so the final
+        page url and that text are both checked like a landing, and only a
+        http(s) candidate counts — the about:blank of a failed navigation is
+        not an exfiltration attempt.
+        """
+        candidates = []
+        page_url = getattr(page, "url", "") or ""
+        if page_url.startswith(("http://", "https://")):
+            candidates.append(page_url)
+        candidates.extend(re.findall(r"at (https?://\S+)", str(exc)))
+        for candidate in dict.fromkeys(candidates):
+            error = self._landing_error(candidate)
+            if error is not None:
+                return error
+        return RuntimeError(f"browser could not open {original_url}: {type(exc).__name__}")
 
     def _require_page(self):
         if self._page is None:
