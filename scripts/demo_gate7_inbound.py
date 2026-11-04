@@ -25,6 +25,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -194,7 +195,7 @@ def scenario_c(seams: Seams) -> None:
     line("(c) hidden instruction: nothing persists into any memory")
 
     class QuietSemantic:
-        added: "list[str]" = []
+        added: ClassVar[list[str]] = []
 
         def add(self, texts):
             self.added.extend(texts)
