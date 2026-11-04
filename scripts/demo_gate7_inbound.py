@@ -37,9 +37,9 @@ from loom.core.graph import build_graph
 from loom.gateway import ScopeStore, issue_scope
 from loom.gateway.tool_gateway import ToolGateway
 from loom.inbound import InboxStore, accept_inbound, compose_triage_prompt
-from loom.tasks import TaskStore
 from loom.inbound.sim_mail import load_sim_mail
 from loom.memory import EpisodicStore, FactsStore
+from loom.tasks import TaskStore
 from loom.tools.drafts import DraftStore
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "inbound"
@@ -194,7 +194,7 @@ def scenario_c(seams: Seams) -> None:
     line("(c) hidden instruction: nothing persists into any memory")
 
     class QuietSemantic:
-        added = []
+        added: "list[str]" = []
 
         def add(self, texts):
             self.added.extend(texts)
