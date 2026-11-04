@@ -24,7 +24,7 @@ from loom.memory import (
 from loom.memory.context import build_context_note
 from loom.memory.episodic import EpisodicStore
 from loom.ops.checkpoints import make_checkpointer
-from loom.tools import make_tools
+from loom.tools import APPROVAL_SIZE_LIMIT, make_tools
 
 logger = logging.getLogger("loom")
 
@@ -35,8 +35,8 @@ MEMORY_REFUSAL = (
 
 _GATE_PAYLOAD_CAP = 2000
 
-_MAIL_DRAFT_TOOLS = {"mail_create_draft", "mail_update_draft"}
-_APPROVAL_SIZE_LIMIT = 10_000
+_MAIL_DRAFT_TOOLS = {"mail_create_draft", "mail_update_draft", "draft_create_local"}
+_APPROVAL_SIZE_LIMIT = APPROVAL_SIZE_LIMIT
 
 
 def _draft_args_size(args: dict) -> int:
@@ -301,6 +301,11 @@ def build_graph(
 
     def post_turn(state: GraphState) -> dict:
         text = _last_human_text(state)
+        if state.get("scope_id"):
+            # Gate 7: a scoped run carries untrusted inbound as its input.
+            # Inbound content never writes memory and never reaches the
+            # episodic log, which later turns would re-inject as context.
+            return {}
         if text:
             _log_episodic_turn(settings.loom_data_dir, text)
         if not text or not has_explicit_memory_intent(text):

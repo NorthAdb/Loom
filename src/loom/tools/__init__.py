@@ -12,10 +12,13 @@ from loom.browser import PlaywrightBrowserTransport, render_page_state
 from loom.calendar import HttpCalendarTransport, parse_events, summarize
 from loom.core.config import Settings
 from loom.mail import MAIL_NOT_CONFIGURED, ImapMailTransport, MailTransport, build_draft_message
+from loom.tools.drafts import DraftStore
 from loom.tools.sandbox import HttpSandboxTransport, LocalSandboxTransport, SandboxTransport
 
 _CALENDAR_NOT_CONFIGURED = "calendar is not configured; set LOOM_ICAL_URL in .env"
 _RANGES = {"today": (0, 1, "today"), "tomorrow": (1, 2, "tomorrow"), "week": (0, 7, "the next 7 days")}
+# The largest to+subject+body an approval may show, shared with the gate.
+APPROVAL_SIZE_LIMIT = 10_000
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,7 @@ def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, 
     imports playwright only when a page is actually needed.
     """
     chosen = transports or {}
+    drafts_store = DraftStore(settings.loom_data_dir)
     if settings.loom_sandbox_url:
         transport: SandboxTransport = HttpSandboxTransport(settings.loom_sandbox_url)
     else:
@@ -246,6 +250,20 @@ def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, 
         verdict = "accepted" if outcome.accepted else "not accepted"
         return f"submit {verdict}: {outcome.detail} ({outcome.url})"
 
+    @tool
+    def draft_create_local(to: str, subject: str, body: str) -> str:
+        """Write a local draft for human review in the data dir; it is never sent.
+
+        Side effect: pauses for approval. The approval shows the full recipient,
+        subject, and body. There is no send path for this draft anywhere.
+        """
+        if sum(len(part) for part in (to, subject, body)) > APPROVAL_SIZE_LIMIT:
+            raise ValueError(
+                f"to+subject+body exceed the {APPROVAL_SIZE_LIMIT}-character limit; write a shorter draft"
+            )
+        draft = drafts_store.add(to=to, subject=subject, body=body)
+        return f"draft {draft.draft_id} stored locally; it has not been sent and cannot be sent"
+
     return {
         "get_time": ToolSpec(get_time, side_effect=False),
         "echo": ToolSpec(echo, side_effect=False),
@@ -263,4 +281,5 @@ def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, 
         "browser_open": ToolSpec(browser_open, side_effect=False),
         "browser_fill": ToolSpec(browser_fill, side_effect=False),
         "browser_submit": ToolSpec(browser_submit, side_effect=True, approval_context=_submit_context),
+        "draft_create_local": ToolSpec(draft_create_local, side_effect=True),
     }
