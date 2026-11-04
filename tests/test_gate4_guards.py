@@ -39,15 +39,16 @@ def make_registry(tmp_path):
     return make_tools(settings)
 
 
-def test_registry_has_sixteen_tools_with_exact_browser_flags(tmp_path):
+def test_registry_has_seventeen_tools_with_exact_browser_flags(tmp_path):
     registry = make_registry(tmp_path)
 
-    assert len(registry) == 16
+    assert len(registry) == 17
     assert set(registry) == {
         "get_time", "echo", "list_dir", "read_file", "write_file", "mkdir", "move_file", "delete_file",
         "propose_sandbox_note", "calendar_list_events", "calendar_summarize_range",
         "mail_create_draft", "mail_update_draft",
         "browser_open", "browser_fill", "browser_submit",
+        "draft_create_local",
     }
     assert registry["browser_open"].side_effect is False
     assert registry["browser_fill"].side_effect is False
