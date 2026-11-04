@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from loom.logging import is_sensitive
+from loom.core.logging import is_sensitive
 
 _VALUE_CAP = 200
 

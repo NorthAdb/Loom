@@ -17,7 +17,7 @@ from typing import Protocol
 from urllib.parse import urljoin, urlsplit
 
 from loom.calendar import _is_loopback, redact_url  # one loopback rule and one url redaction rule for every transport
-from loom.config import Settings
+from loom.core.config import Settings
 
 logger = logging.getLogger("loom")
 

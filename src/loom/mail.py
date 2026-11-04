@@ -17,7 +17,7 @@ from email.message import EmailMessage
 from email.utils import make_msgid
 from typing import Protocol
 
-from loom.config import Settings
+from loom.core.config import Settings
 
 MAIL_NOT_CONFIGURED = "mail is not configured; set LOOM_IMAP_HOST and LOOM_MAIL_* in .env"
 

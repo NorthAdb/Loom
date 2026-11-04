@@ -23,17 +23,17 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 import loom
-from loom.backup import create_backup, restore_backup
-from loom.budget import UNLIMITED_LINE, BudgetGuard, SpendLedger, guard_from_settings, turn_tokens
 from loom.calendar import HttpCalendarTransport, redact_url
-from loom.config import ConfigError, Settings, get_settings
-from loom.eval import format_result, format_summary, load_cases, run_case, run_cases
-from loom.logging import set_run_id, setup_logging
+from loom.core.config import ConfigError, Settings, get_settings
+from loom.core.logging import set_run_id, setup_logging
+from loom.core.runner import resume_pending, run_routine
+from loom.core.runtime import open_graph
+from loom.gateway.pending import PENDING, PendingStore
 from loom.memory import FactsStore, build_semantic_memory
-from loom.pending import PENDING, PendingStore
-from loom.routines import Routine, RoutineStore
-from loom.runner import resume_pending, run_routine
-from loom.runtime import open_graph
+from loom.ops.backup import create_backup, restore_backup
+from loom.ops.budget import UNLIMITED_LINE, BudgetGuard, SpendLedger, guard_from_settings, turn_tokens
+from loom.ops.eval import format_result, format_summary, load_cases, run_case, run_cases
+from loom.ops.routines import Routine, RoutineStore
 
 logger = logging.getLogger("loom")
 

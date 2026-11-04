@@ -37,7 +37,7 @@ Repository = "https://github.com/NorthAdb/Loom"
 Documentation = "https://github.com/NorthAdb/Loom/blob/main/docs/STATUS.md"
 
 [project.scripts]
-loom = "loom.cli:main"
+loom = "loom.cli.main:main"
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
