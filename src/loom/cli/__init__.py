@@ -1,4 +1,4 @@
-"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, worker, stats, backup, restore, eval."""
+"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, tasks, worker, stats, backup, restore, eval."""
 
 import argparse
 import imaplib
@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import socket
+import sqlite3
 import sys
 import time
 import urllib.error
@@ -29,11 +30,19 @@ from loom.core.logging import set_run_id, setup_logging
 from loom.core.runner import resume_pending, run_routine
 from loom.core.runtime import open_graph
 from loom.gateway.pending import PENDING, PendingStore
-from loom.memory import FactsStore, build_semantic_memory
+from loom.memory import (
+    DigestStore,
+    EpisodicStore,
+    FactsStore,
+    FeedbackStore,
+    build_semantic_memory,
+    compact,
+)
 from loom.ops.backup import create_backup, restore_backup
 from loom.ops.budget import UNLIMITED_LINE, BudgetGuard, SpendLedger, guard_from_settings, turn_tokens
 from loom.ops.eval import format_result, format_summary, load_cases, run_case, run_cases
 from loom.ops.routines import Routine, RoutineStore
+from loom.tasks import TaskStatus, TaskStore
 
 logger = logging.getLogger("loom")
 
@@ -143,6 +152,17 @@ def _doctor() -> int:
     else:
         print(f"{_FAIL}data dir {data_dir} (cannot create or write)")
         failed = True
+
+    for name, probe in (
+        ("tasks store", lambda: len(TaskStore(data_dir).list())),
+        ("context store", lambda: len(DigestStore(data_dir).get()) + EpisodicStore(data_dir).count_unfolded()),
+    ):
+        try:
+            probe()
+            print(f"{_OK}{name}")
+        except (OSError, sqlite3.Error) as exc:
+            print(f"{_FAIL}{name} ({exc})")
+            failed = True
 
     sandbox_url = settings.loom_sandbox_url if settings else os.environ.get("LOOM_SANDBOX_URL", "")
     if sandbox_url:
@@ -404,6 +424,130 @@ def _memory_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def _task_line(task) -> str:
+    line = f"{task.task_id}  status={task.status.value}  kind={task.kind}  {task.title}"
+    if task.status is TaskStatus.WAITING_APPROVAL and task.waiting_reason:
+        line += f"  waiting: {task.waiting_reason}"
+    return line
+
+
+def _resolve_task(store: TaskStore, ref: str):
+    """One task by exact id, or by unique id prefix; None with a message printed otherwise."""
+    if not ref:
+        print("error: give a task id (or a unique prefix of one)")
+        return None
+    if len(ref) == 32:
+        try:
+            return store.get(ref)
+        except KeyError:
+            print(f"error: no such task: {ref!r}")
+            return None
+    matches = [task for task in store.list() if task.task_id.startswith(ref)]
+    if not matches:
+        print(f"error: no task matches {ref!r}")
+        return None
+    if len(matches) > 1:
+        print(f"error: {len(matches)} tasks match {ref!r}; use a longer prefix")
+        return None
+    return matches[0]
+
+
+def _tasks_list(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    status = TaskStatus(args.status) if args.status else None
+    tasks = TaskStore(settings.loom_data_dir).list(status=status)
+    if not tasks:
+        print("(no tasks)")
+        return 0
+    for task in tasks:
+        print(_task_line(task))
+    return 0
+
+
+def _tasks_show(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    store = TaskStore(settings.loom_data_dir)
+    task = _resolve_task(store, args.id)
+    if task is None:
+        return 1
+    print(_task_line(task))
+    if task.error:
+        print(f"error: {task.error}")
+    if task.result:
+        print(f"result: {task.result}")
+    for event in store.history(task.task_id):
+        reason = f"  ({event.reason})" if event.reason else ""
+        print(f"  {event.ts}  {event.from_status or '-'} -> {event.to_status}{reason}")
+    return 0
+
+
+def _tasks_recover(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    recovered = TaskStore(settings.loom_data_dir).recover()
+    if not recovered:
+        print("(nothing to recover)")
+        return 0
+    for task in recovered:
+        print(f"recovered: {task.task_id} is now blocked (was running when the process stopped)")
+    return 0
+
+
+def _memory_digest(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    digest = DigestStore(settings.loom_data_dir).get()
+    print(digest if digest else "(no digest yet; run `loom memory compact` after turns accrue)")
+    return 0
+
+
+def _memory_episodic(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    entries = EpisodicStore(settings.loom_data_dir).recent(args.limit, unfolded_only=not args.all)
+    if not entries:
+        print("(no episodic entries)")
+        return 0
+    for entry in entries:
+        marker = " folded" if entry.folded else ""
+        print(f"{entry.seq}  {entry.ts}  {entry.kind}: {entry.text[:120]}{marker}")
+    return 0
+
+
+def _memory_feedback_add(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    try:
+        entry = FeedbackStore(settings.loom_data_dir).add("owner", " ".join(args.text))
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 1
+    print(f"{entry.seq}  {entry.ts}  {entry.source}: {entry.text}")
+    return 0
+
+
+def _memory_feedback_list(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    entries = FeedbackStore(settings.loom_data_dir).recent(20)
+    if not entries:
+        print("(no feedback)")
+        return 0
+    for entry in entries:
+        print(f"{entry.seq}  {entry.ts}  {entry.source}: {entry.text}")
+    return 0
+
+
+def _memory_compact(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    try:
+        result = compact(settings.loom_data_dir)
+    except (OSError, sqlite3.Error) as exc:
+        print(f"error: compact failed, the old digest is unchanged ({exc})")
+        return 1
+    if result.folded == 0:
+        print("(nothing to compact)")
+        return 0
+    print(f"folded {result.folded} entr{'y' if result.folded == 1 else 'ies'} into the digest")
+    print(f"digest: {len(result.old_digest)} -> {len(result.new_digest)} chars")
+    return 0
+
+
 def _worker(args: argparse.Namespace) -> int:
     settings = get_settings()
     setup_logging(settings)
@@ -570,10 +714,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     facts_del_parser.add_argument("key")
     memory_search_parser = memory_sub.add_parser("search", help="Search the semantic memory store.")
     memory_search_parser.add_argument("query", nargs="+")
+    memory_sub.add_parser("digest", help="Show the working-set digest (compacted episodic activity).")
+    episodic_parser = memory_sub.add_parser("episodic", help="List recent episodic entries, newest first.")
+    episodic_parser.add_argument("--limit", type=int, default=10, help="How many entries to show (default 10).")
+    episodic_parser.add_argument(
+        "--all", action="store_true", help="Include entries already folded into the digest."
+    )
+    feedback_parser = memory_sub.add_parser("feedback", help="Record owner feedback, or list it.")
+    feedback_sub = feedback_parser.add_subparsers(dest="feedback_command")
+    feedback_add_parser = feedback_sub.add_parser("add", help="Record one correction for future turns.")
+    feedback_add_parser.add_argument("text", nargs="+", help="The feedback; secrets are refused.")
+    feedback_sub.add_parser("list", help="List recent feedback, newest first.")
+    memory_sub.add_parser("compact", help="Fold the oldest episodic entries into the digest.")
+
+    tasks_parser = subparsers.add_parser("tasks", help="Inspect and manage the task state machine.")
+    tasks_sub = tasks_parser.add_subparsers(dest="tasks_command", required=True)
+    tasks_list_parser = tasks_sub.add_parser("list", help="List tasks in creation order.")
+    tasks_list_parser.add_argument(
+        "--status", help="Filter to one status: created, running, waiting_approval, blocked, completed, failed, cancelled."
+    )
+    tasks_show_parser = tasks_sub.add_parser("show", help="Show one task and its transition history (id or prefix).")
+    tasks_show_parser.add_argument("id")
+    tasks_sub.add_parser("recover", help="Move tasks stuck in running (after a restart) to blocked.")
 
     subparsers.add_parser("stats", help="Print the daily budget, token spend, and audit counters.")
 
-    backup_parser = subparsers.add_parser("backup", help="Zip the five data-dir roots into one archive.")
+    backup_parser = subparsers.add_parser("backup", help="Zip the data-dir roots into one archive.")
     backup_parser.add_argument(
         "destination", nargs="?", help="Directory for the archive (default: ./backups relative to the current directory)."
     )
@@ -614,9 +780,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "memory":
         if args.memory_command == "search":
             command = _memory_search
+        elif args.memory_command == "digest":
+            command = _memory_digest
+        elif args.memory_command == "episodic":
+            command = _memory_episodic
+        elif args.memory_command == "compact":
+            command = _memory_compact
+        elif args.memory_command == "feedback":
+            command = _memory_feedback_add if args.feedback_command == "add" else _memory_feedback_list
         else:
             facts_actions = {"set": _memory_facts_set, "del": _memory_facts_del}
             command = facts_actions.get(getattr(args, "facts_command", None), _memory_facts_list)
+    elif args.command == "tasks":
+        command = {
+            "list": _tasks_list,
+            "show": _tasks_show,
+            "recover": _tasks_recover,
+        }[args.tasks_command]
     elif args.command == "worker":
         command = _worker
     elif args.command == "stats":

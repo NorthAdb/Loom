@@ -1,6 +1,6 @@
 """Zip archives of the Loom data dir behind `loom backup` and `loom restore`.
 
-An archive pins exactly the five roots in BACKUP_ROOTS; everything else in the
+An archive pins exactly the roots in BACKUP_ROOTS; everything else in the
 data dir (spend ledgers, the semantic memory store, .env) is never included,
 so an archive cannot become a secrets exfiltration path.
 """
@@ -9,9 +9,11 @@ import zipfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-# The five roots an archive may contain. Adding a data-dir artifact means
-# adding it here and pinning it in tests/test_backup.py.
-BACKUP_ROOTS = ("facts.db", "routines.json", "approvals", "audit", "checkpoints")
+# The roots an archive may contain. Adding a data-dir artifact means
+# adding it here and pinning it in tests/test_backup.py. tasks.db and
+# context.db joined in Gate 6: a restore that dropped the task state
+# machine or the context stores would break the restart-recovery promise.
+BACKUP_ROOTS = ("facts.db", "routines.json", "approvals", "audit", "checkpoints", "tasks.db", "context.db")
 
 
 def _archive_files(data_dir: Path):
@@ -35,7 +37,7 @@ def _next_archive_path(destination_dir: Path) -> Path:
 
 
 def create_backup(data_dir: Path, destination_dir: Path) -> Path:
-    """Zip the five data-dir roots into `<destination_dir>/loom-backup-<stamp>.zip`.
+    """Zip the data-dir roots into `<destination_dir>/loom-backup-<stamp>.zip`.
 
     The stamp is local time; an existing name gets a `-1`, `-2`, ... suffix
     instead of being overwritten. Missing roots are simply absent from the
