@@ -58,7 +58,7 @@ SessionDep = Annotated[dict, Depends(_open_session)]
 async def _require_csrf(request: Request) -> None:
     """Every POST form must carry the session's csrf token."""
     token = (await request.form()).get("csrf_token")
-    if not token or token != request.session.get("csrf_token"):
+    if not token or not secrets.compare_digest(str(token), request.session.get("csrf_token") or ""):
         raise Refused("missing or mismatched csrf token")
 
 
@@ -140,6 +140,10 @@ def create_app(data_dir: Path, settings, *, port: int = 8688, secret_key: str | 
             resume_pending(pending_id, decision, settings, pending_store)
         except KeyError:
             raise HTTPException(status_code=404) from None
+        except ValueError as exc:
+            # The runner refuses an unknown decision and an already-resolved
+            # record; both are the console's fault, rendered as a refusal.
+            raise Refused(str(exc)) from None
         return RedirectResponse("/approvals", status_code=303)
 
     @app.get("/audit")

@@ -199,6 +199,30 @@ def test_approve_with_session_and_valid_csrf_calls_resume_pending_and_redirects(
     assert calls[0][3].list_pending()[0].pending_id == "p-1"
 
 
+def test_an_unknown_decision_is_refused_not_500(tmp_path, monkeypatch):
+    """The runner refuses decisions outside approve/reject; the console renders that as a refusal."""
+    settings = make_settings(tmp_path)
+    seed_pending(tmp_path)
+    monkeypatch.setattr(
+        console_app,
+        "resume_pending",
+        lambda pending_id, decision, resume_settings, pending_store: (_ for _ in ()).throw(
+            ValueError(f"decision must be 'approve' or 'reject', got {decision!r}")
+        ),
+    )
+    client, _app = make_client(tmp_path, settings)
+    token = csrf_token(client.get("/approvals"))
+
+    response = client.post(
+        "/approvals/p-1/decide",
+        data={"decision": "banana", "csrf_token": token},
+        headers={"Origin": BASE_URL},
+    )
+
+    assert response.status_code == 403
+    assert "decision must be" in response.text
+
+
 def test_reject_with_session_and_valid_csrf_calls_resume_pending_and_redirects(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     seed_pending(tmp_path)

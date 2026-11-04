@@ -164,6 +164,13 @@ def _doctor() -> int:
             print(f"{_FAIL}{name} ({exc})")
             failed = True
 
+    try:
+        import fastapi  # noqa: F401
+
+        print(f"{_OK}console extra")
+    except ImportError:
+        print(f"{_WARN}console extra not installed (`loom console` needs it: pip install -e \".[console]\")")
+
     sandbox_url = settings.loom_sandbox_url if settings else os.environ.get("LOOM_SANDBOX_URL", "")
     if sandbox_url:
         if _sandbox_reachable(sandbox_url):
@@ -548,6 +555,21 @@ def _memory_compact(args: argparse.Namespace) -> int:
     return 0
 
 
+def _console(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    try:
+        from loom.console.app import create_app
+    except ModuleNotFoundError:
+        print("error: the console extra is not installed; run: pip install -e \".[console]\"")
+        return 1
+    import uvicorn
+
+    app = create_app(settings.loom_data_dir, settings, port=args.port)
+    print(f"operator console on http://127.0.0.1:{args.port} (local machine only; Ctrl-C stops)")
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    return 0
+
+
 def _worker(args: argparse.Namespace) -> int:
     settings = get_settings()
     setup_logging(settings)
@@ -737,6 +759,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     tasks_show_parser.add_argument("id")
     tasks_sub.add_parser("recover", help="Move tasks stuck in running (after a restart) to blocked.")
 
+    console_parser = subparsers.add_parser("console", help="Run the local operator console (Inbox/Draft/Approval/Audit).")
+    console_parser.add_argument("--port", type=int, default=8688, help="Local port to bind on 127.0.0.1 (default 8688).")
+
     subparsers.add_parser("stats", help="Print the daily budget, token spend, and audit counters.")
 
     backup_parser = subparsers.add_parser("backup", help="Zip the data-dir roots into one archive.")
@@ -797,6 +822,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "show": _tasks_show,
             "recover": _tasks_recover,
         }[args.tasks_command]
+    elif args.command == "console":
+        command = _console
     elif args.command == "worker":
         command = _worker
     elif args.command == "stats":
