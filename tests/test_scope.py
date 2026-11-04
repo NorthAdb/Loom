@@ -6,17 +6,17 @@ from loom.gateway import RequestScope, ScopeError, ScopeStore, issue_scope
 
 
 def _scope(**overrides):
-    defaults = dict(
-        scope_id="s1",
-        principal="owner",
-        channel="sim_mail",
-        resource="mail/drafts:landlord",
-        allowed_actions=frozenset({"create_draft"}),
-        memory_write=False,
-        approval_required=True,
-        expires_at=None,
-        correlation_id="c1",
-    )
+    defaults = {
+        "scope_id": "s1",
+        "principal": "owner",
+        "channel": "sim_mail",
+        "resource": "mail/drafts:landlord",
+        "allowed_actions": frozenset({"create_draft"}),
+        "memory_write": False,
+        "approval_required": True,
+        "expires_at": None,
+        "correlation_id": "c1",
+    }
     defaults.update(overrides)
     return RequestScope(**defaults)
 

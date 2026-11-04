@@ -12,6 +12,7 @@ from langgraph.types import interrupt
 
 from loom.audit.log import AuditLog, summarize_args
 from loom.core.config import Settings
+from loom.gateway.tool_gateway import ToolGateway
 from loom.memory import (
     FactsStore,
     SemanticMemory,
@@ -77,6 +78,9 @@ class GraphState(TypedDict):
     memory_note: str
     run_id: str
     metadata: dict
+    # Set by the caller at invoke time (the inbound seam), never by the model;
+    # the gateway resolves it against the scope store on every check.
+    scope_id: str
 
 
 def _last_human_text(state: GraphState) -> str:
@@ -102,10 +106,12 @@ def build_graph(
     checkpointer=None,
     memory: SemanticMemory | None = None,
     transports: dict | None = None,
+    gateway: ToolGateway | None = None,
 ):
     """Compile the pre_agent/agent/gate/tools/post_turn/aborted graph. Long-lived callers pass the
     checkpointer so the connection lifecycle stays with them. Tests inject a fake `memory` and
-    fake mail/calendar `transports`; None builds the real ones from settings."""
+    fake mail/calendar `transports`; None builds the real ones from settings. A `gateway` turns on
+    the Gate 7 scope checks at the gate and in run_tools; None keeps the Gate 1-5 behavior."""
     registry = make_tools(settings, transports)
     audit = AuditLog(settings.loom_data_dir)
     facts_store = FactsStore(settings.loom_data_dir)
@@ -187,6 +193,28 @@ def build_graph(
                 "refusal": line,
             }
             return {"approval_status": "rejected", "pending_action": payload}
+        # Gate 7: the gateway speaks before the human does. A call the scope
+        # already forbids never reaches the interrupt; the gateway audited
+        # the refusal, so the gate does not audit it again.
+        correlation_by_name: dict[str, str | None] = {}
+        if gateway is not None:
+            verdicts = {
+                call["name"]: gateway.check(
+                    state.get("scope_id"), call["name"], side_effect=True, run_id=state.get("run_id", "")
+                )
+                for call in calls
+            }
+            blocked = [(call, verdicts[call["name"]]) for call in calls if not verdicts[call["name"]].allowed]
+            if blocked:
+                c, verdict = blocked[0]
+                payload = {
+                    "tools": [{"name": c["name"], "args": summarize_args(c["args"])}],
+                    "refusal": f"Gateway refused {c['name']}: {verdict.reason}",
+                }
+                return {"approval_status": "rejected", "pending_action": payload}
+            correlation_by_name = {
+                name: (verdict.scope.correlation_id if verdict.scope else None) for name, verdict in verdicts.items()
+            }
         payload = {
             "tools": [
                 {
@@ -211,6 +239,7 @@ def build_graph(
                 tool=c["name"],
                 args=args,
                 decision=status,
+                correlation_id=correlation_by_name.get(c["name"]),
             )
         return {"approval_status": status, "pending_action": payload}
 
@@ -229,6 +258,21 @@ def build_graph(
             # tool can change the state the context describes.
             context = spec.approval_context() if spec.approval_context else {}
             audited = {**call["args"], **context}
+            correlation_id = None
+            if gateway is not None:
+                # Execution-time re-check: an approval that went stale (the
+                # scope expired or the store changed) still cannot execute.
+                verdict = gateway.check(
+                    state.get("scope_id"), call["name"], side_effect=spec.side_effect, run_id=state.get("run_id", "")
+                )
+                if not verdict.allowed:
+                    messages.append(
+                        ToolMessage(
+                            content=f"error: gateway refused {call['name']}: {verdict.reason}", tool_call_id=call["id"]
+                        )
+                    )
+                    continue
+                correlation_id = verdict.scope.correlation_id if verdict.scope else None
             try:
                 result = spec.func.invoke(call["args"])
                 messages.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
@@ -241,6 +285,7 @@ def build_graph(
                         tool=call["name"],
                         args=audited,
                         decision="failed",
+                        correlation_id=correlation_id,
                     )
                 continue
             if spec.side_effect:
@@ -250,6 +295,7 @@ def build_graph(
                     tool=call["name"],
                     args=audited,
                     decision="executed",
+                    correlation_id=correlation_id,
                 )
         return {"messages": messages, "pending_action": None}
 
