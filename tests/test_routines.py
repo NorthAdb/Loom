@@ -2,7 +2,7 @@ import json
 
 from conftest import read_audit
 
-from loom.routines import Routine, RoutineStore
+from loom.ops.routines import Routine, RoutineStore
 
 
 def make_routine(routine_id="daily_stats", cron="30 8 * * *", **overrides):

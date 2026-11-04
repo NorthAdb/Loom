@@ -1,8 +1,11 @@
 import imaplib
+import importlib
 
 import pytest
 
 from loom import cli
+
+cli_main = importlib.import_module("loom.cli.main")
 
 
 class _FakeImapClient:
@@ -49,7 +52,7 @@ def test_doctor_imap_special_use_check_warns_only_without_the_drafts_flag(
 ):
     listener, port = _listening_port()
     client = _FakeImapClient(list_lines=list_lines)
-    monkeypatch.setattr("loom.cli.imaplib.IMAP4_SSL", lambda host, port, timeout=2: client)
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", lambda host, port, timeout=2: client)
     (tmp_path / ".env").write_text(_imap_env_file(tmp_path, port), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     try:
@@ -67,7 +70,7 @@ def test_doctor_imap_special_use_check_warns_only_without_the_drafts_flag(
 def test_doctor_imap_special_use_check_survives_a_login_failure(monkeypatch, capsys, tmp_path):
     listener, port = _listening_port()
     client = _FakeImapClient(list_lines=[rb'(\HasNoChildren) "/" "Drafts"'], login_error=True)
-    monkeypatch.setattr("loom.cli.imaplib.IMAP4_SSL", lambda host, port, timeout=2: client)
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", lambda host, port, timeout=2: client)
     (tmp_path / ".env").write_text(_imap_env_file(tmp_path, port), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     try:
@@ -283,7 +286,7 @@ def test_doctor_output_never_contains_ics_secret(monkeypatch, capsys, tmp_path, 
         def fetch_ics(self):
             raise RuntimeError("dead feed (stubbed so the test needs no network)")
 
-    monkeypatch.setattr("loom.cli.HttpCalendarTransport", _DeadTransport)
+    monkeypatch.setattr(cli_main, "HttpCalendarTransport", _DeadTransport)
     (tmp_path / ".env").write_text(_env_file(tmp_path, f"LOOM_ICAL_URL={url}\n"), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 

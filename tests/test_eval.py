@@ -1,5 +1,6 @@
 """Unit tests for the eval harness: parsing, judging, the canary rule, the rate, and the CLI exit codes."""
 
+import importlib
 import json
 from contextlib import redirect_stdout
 from io import StringIO
@@ -8,7 +9,9 @@ from pathlib import Path
 import pytest
 
 import loom.cli
-from loom.eval import EvalCase, format_summary, load_cases, run_case, run_cases
+from loom.ops.eval import EvalCase, format_summary, load_cases, run_case, run_cases
+
+cli_main = importlib.import_module("loom.cli.main")
 
 
 def write_case(directory: Path, name: str, raw: dict) -> Path:
@@ -119,7 +122,7 @@ def test_a_green_canary_fails_the_summary(tmp_path):
 
 def run_eval_cli(cases_dir: Path, monkeypatch) -> tuple[int, str]:
     buffer = StringIO()
-    monkeypatch.setattr(loom.cli, "EVAL_CASES_DIR", cases_dir)
+    monkeypatch.setattr(cli_main, "EVAL_CASES_DIR", cases_dir)
     with redirect_stdout(buffer):
         code = loom.cli.main(["eval"])
     return code, buffer.getvalue()
@@ -161,7 +164,7 @@ def test_cli_single_case_mode_exits_by_that_case_verdict(tmp_path, monkeypatch):
     assert code == 0  # full mode: one green case, rate 100, no canary to fail
 
     buffer = StringIO()
-    monkeypatch.setattr(loom.cli, "EVAL_CASES_DIR", tmp_path)
+    monkeypatch.setattr(cli_main, "EVAL_CASES_DIR", tmp_path)
     with redirect_stdout(buffer):
         code = loom.cli.main(["eval", "ok_case"])
     assert code == 0

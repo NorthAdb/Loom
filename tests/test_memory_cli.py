@@ -1,6 +1,10 @@
 """CLI memory tests through main(argv)."""
 
+import importlib
+
 import loom.cli
+
+cli_main = importlib.import_module("loom.cli.main")
 
 
 class FakeSemantic:
@@ -87,7 +91,7 @@ def test_search_prints_hits_from_the_memory_factory(monkeypatch, tmp_path, capsy
     monkeypatch.setenv("LOOM_ENV", "dev")
     monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
     fake = FakeSemantic(store={"likes concise answers": "likes concise answers"})
-    monkeypatch.setattr(loom.cli, "build_semantic_memory", lambda settings: fake)
+    monkeypatch.setattr(cli_main, "build_semantic_memory", lambda settings: fake)
 
     code, out = run(capsys, ["memory", "search", "reply", "style"])
 
@@ -99,7 +103,7 @@ def test_search_prints_hits_from_the_memory_factory(monkeypatch, tmp_path, capsy
 def test_search_empty_store_prints_placeholder(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("LOOM_ENV", "dev")
     monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(loom.cli, "build_semantic_memory", lambda settings: FakeSemantic())
+    monkeypatch.setattr(cli_main, "build_semantic_memory", lambda settings: FakeSemantic())
 
     code, out = run(capsys, ["memory", "search", "anything"])
 
@@ -123,7 +127,7 @@ def test_search_reports_runtime_error_as_one_line(monkeypatch, tmp_path, capsys)
     monkeypatch.setenv("LOOM_ENV", "dev")
     monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
     broken = FakeSemantic(error=RuntimeError("endpoint unreachable"))
-    monkeypatch.setattr(loom.cli, "build_semantic_memory", lambda settings: broken)
+    monkeypatch.setattr(cli_main, "build_semantic_memory", lambda settings: broken)
 
     code, out = run(capsys, ["memory", "search", "anything"])
 

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 import loom.console.app as console_app
 from loom.audit.log import AuditLog
-from loom.config import Settings
+from loom.core.config import Settings
 from loom.gateway.pending import PendingApproval, PendingStore
 from loom.inbound import InboundMessage, InboxStore
 from loom.tools.drafts import DraftStore

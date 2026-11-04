@@ -2,11 +2,12 @@ from conftest import FakeMailTransport, ScriptedChatModel, read_audit, tool_call
 from langchain_core.messages import AIMessage
 
 import loom.cli
-import loom.runtime
+import loom.core.runtime
 import loom.tools
 from loom.audit import AuditLog
-from loom.budget import BudgetGuard, SpendLedger
-from loom.graph import build_graph
+from loom.cli.main import _chat, chat_session
+from loom.core.graph import build_graph
+from loom.ops.budget import BudgetGuard, SpendLedger
 
 
 class CountingGraph:
@@ -40,7 +41,7 @@ def make_session_graph(tmp_path, scripted):
 
 
 def _settings(tmp_path):
-    from loom.config import Settings
+    from loom.core.config import Settings
 
     return Settings(loom_env="dev", loom_data_dir=tmp_path)
 
@@ -58,7 +59,7 @@ def test_approve_turn_executes_the_proposed_tool(tmp_path):
     reader = Reader(["save a note", "approve", "quit"])
     lines = []
 
-    loom.cli.chat_session(graph, "t1", reader, lines.append)
+    chat_session(graph, "t1", reader, lines.append)
 
     assert "you> " in reader.prompts
     assert "approve or reject? " in reader.prompts
@@ -74,7 +75,7 @@ def test_reject_turn_does_not_execute_and_explains(tmp_path):
     reader = Reader(["save a note", "reject", "quit"])
     lines = []
 
-    loom.cli.chat_session(graph, "t2", reader, lines.append)
+    chat_session(graph, "t2", reader, lines.append)
 
     assert "approve or reject? " in reader.prompts
     assert lines[-1] == "The proposed action (propose_sandbox_note) was rejected and was not executed."
@@ -90,7 +91,7 @@ def test_refused_turn_names_the_budget_and_never_invokes(tmp_path):
     reader = Reader(["hello", "quit"])
     lines = []
 
-    loom.cli.chat_session(graph, "t-budget", reader, lines.append, budget=guard)
+    chat_session(graph, "t-budget", reader, lines.append, budget=guard)
 
     assert graph.calls == 0
     assert lines == ["daily budget exceeded: 1 of 1 tokens used today; not run"]
@@ -103,7 +104,7 @@ def test_completed_turn_records_its_spend(tmp_path):
     reader = Reader(["hello", "quit"])
     lines = []
 
-    loom.cli.chat_session(graph, "t-spend", reader, lines.append, budget=guard)
+    chat_session(graph, "t-spend", reader, lines.append, budget=guard)
 
     assert graph.calls == 1
     assert lines == ["ok"]
@@ -117,7 +118,7 @@ def test_budget_of_one_brakes_the_second_turn(tmp_path):
     reader = Reader(["one", "two", "quit"])
     lines = []
 
-    loom.cli.chat_session(graph, "t-one", reader, lines.append, budget=guard)
+    chat_session(graph, "t-one", reader, lines.append, budget=guard)
 
     assert graph.calls == 1
     assert lines == ["first", "daily budget exceeded: 3 of 1 tokens used today; not run"]
@@ -131,11 +132,11 @@ def test_chat_command_builds_the_graph_through_the_cli_factory(monkeypatch, tmp_
         AIMessage(content="done"),
     ]
     model = ScriptedChatModel(messages=iter(scripted))
-    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: model)
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda settings: model)
     reader = Reader(["write it", "approve", "quit"])
     lines = []
 
-    code = loom.cli._chat(None, reader, lines.append)
+    code = _chat(None, reader, lines.append)
 
     assert code == 0
     assert any(line.startswith("thread ") for line in lines)
@@ -149,7 +150,7 @@ def test_main_chat_smoke_quits_cleanly(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setenv("LOOM_ENV", "dev")
     monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: ScriptedChatModel(messages=iter([])))
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda settings: ScriptedChatModel(messages=iter([])))
     monkeypatch.setattr("sys.stdin", io.StringIO("quit\n"))
 
     code = loom.cli.main(["chat"])
@@ -171,7 +172,7 @@ def test_main_chat_approve_path_writes_the_file(monkeypatch, tmp_path, capsys):
         AIMessage(content="note written"),
     ]
     model = ScriptedChatModel(messages=iter(scripted))
-    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: model)
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda settings: model)
     monkeypatch.setattr("sys.stdin", io.StringIO("save a note\napprove\nquit\n"))
 
     code = loom.cli.main(["chat"])
@@ -190,13 +191,13 @@ def test_main_chat_resume_thread_from_checkpoint(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("LOOM_ENV", "dev")
     monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
     first = ScriptedChatModel(messages=iter([AIMessage(content="first answer")]))
-    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: first)
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda settings: first)
     monkeypatch.setattr("sys.stdin", io.StringIO("hello\nquit\n"))
     assert loom.cli.main(["chat"]) == 0
     thread_id = next(line.split()[1] for line in capsys.readouterr().out.splitlines() if line.startswith("thread "))
 
     second = ScriptedChatModel(messages=iter([AIMessage(content="second answer")]))
-    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: second)
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda settings: second)
     monkeypatch.setattr("sys.stdin", io.StringIO("again\nquit\n"))
     assert loom.cli.main(["chat", "--thread-id", thread_id]) == 0
 
@@ -219,9 +220,9 @@ def test_main_chat_mail_draft_approve_shows_full_text_then_appends(monkeypatch, 
         AIMessage(content="draft saved"),
     ]
     model = ScriptedChatModel(messages=iter(scripted))
-    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: model)
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda settings: model)
     mail = FakeMailTransport()
-    monkeypatch.setattr(loom.tools, "build_mail_transport", lambda settings: mail)
+    monkeypatch.setattr(loom.tools.registry, "build_mail_transport", lambda settings: mail)
     monkeypatch.setattr("sys.stdin", io.StringIO("write to peer\napprove\nquit\n"))
 
     code = loom.cli.main(["chat"])
@@ -247,7 +248,7 @@ def test_main_chat_refuses_when_the_budget_is_spent(monkeypatch, tmp_path, capsy
     monkeypatch.setenv("LOOM_DAILY_BUDGET_TOKENS", "1")
     SpendLedger(tmp_path).record("chat", "seed", 1)
     monkeypatch.setattr(
-        loom.runtime,
+        loom.core.runtime,
         "make_model",
         lambda settings: ScriptedChatModel(messages=iter([AIMessage(content="should not appear")])),
     )

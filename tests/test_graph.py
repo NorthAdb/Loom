@@ -2,8 +2,8 @@ from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
-from loom.config import Settings
-from loom.graph import build_graph
+from loom.core.config import Settings
+from loom.core.graph import build_graph
 
 
 def make_graph(tmp_path, scripted):

@@ -13,8 +13,8 @@ import pytest
 from conftest import FakeMailTransport
 
 from loom.audit import summarize_args
-from loom.config import Settings
-from loom.logging import is_sensitive
+from loom.core.config import Settings
+from loom.core.logging import is_sensitive
 from loom.tools import make_tools
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "loom"
@@ -31,7 +31,8 @@ IMAP_VERBS = {"uid", "append", "select", "login", "logout"}
 
 
 def source_text() -> str:
-    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(_SRC.glob("*.py")))
+    roots = [*_SRC.glob("*.py"), *(_SRC / "tools").glob("*.py")]
+    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(roots))
 
 
 def make_registry(tmp_path):
@@ -67,7 +68,7 @@ def test_forbidden_symbols_never_appear_in_source(symbol):
 
 
 def test_mail_module_uses_only_draft_and_read_imap_verbs():
-    text = (_SRC / "mail.py").read_text(encoding="utf-8")
+    text = (_SRC / "tools" / "mail.py").read_text(encoding="utf-8")
 
     verbs = set(re.findall(r"client\.(\w+)\(", text))
     module_uses = set(re.findall(r"imaplib\.(IMAP4_SSL|IMAP4\.error)", text))

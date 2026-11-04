@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
 from loom.audit.log import AuditLog
-from loom.config import Settings
+from loom.core.config import Settings
 from loom.core.graph import build_graph
 from loom.gateway import ScopeStore, issue_scope
 from loom.gateway.tool_gateway import ToolGateway

@@ -7,7 +7,8 @@ from conftest import read_audit
 from langchain_core.messages import AIMessage, HumanMessage
 
 from loom.audit import AuditLog
-from loom.budget import (
+from loom.core.config import Settings
+from loom.ops.budget import (
     UNLIMITED_LINE,
     BudgetGuard,
     SpendLedger,
@@ -15,7 +16,6 @@ from loom.budget import (
     guard_from_settings,
     turn_tokens,
 )
-from loom.config import Settings
 
 
 def usage_message(input_tokens, output_tokens):

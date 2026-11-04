@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from loom.config import Settings
+from loom.core.config import Settings
 from loom.tools import make_tools
 
 

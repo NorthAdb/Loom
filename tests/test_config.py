@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from loom.config import ConfigError, Settings, get_settings
+from loom.core.config import ConfigError, Settings, get_settings
 
 
 def test_loads_from_environment(monkeypatch):

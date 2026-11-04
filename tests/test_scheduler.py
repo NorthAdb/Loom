@@ -9,11 +9,11 @@ from apscheduler.triggers.cron import CronTrigger
 from conftest import ScriptedChatModel, read_audit
 from langchain_core.messages import AIMessage
 
-import loom.runtime
-from loom.config import Settings
-from loom.pending import PendingStore
-from loom.routines import Routine, RoutineStore
-from loom.runner import run_routine
+import loom.core.runtime
+from loom.core.config import Settings
+from loom.core.runner import run_routine
+from loom.gateway.pending import PendingStore
+from loom.ops.routines import Routine, RoutineStore
 
 
 def test_cron_trigger_parses_routine_cron_and_computes_next_fire():
@@ -32,7 +32,7 @@ def test_scheduled_job_fires_run_routine_once(monkeypatch, tmp_path):
     pending = PendingStore(tmp_path)
     routine = store.add(Routine(id="smoke_stats", name="Smoke", cron="* * * * *", prompt="count the files"))
     monkeypatch.setattr(
-        loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="10 files")]))
+        loom.core.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="10 files")]))
     )
 
     scheduler = BackgroundScheduler()

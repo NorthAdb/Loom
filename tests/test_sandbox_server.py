@@ -4,8 +4,8 @@ import urllib.request
 
 import pytest
 
-from loom.sandbox import HttpSandboxTransport
-from loom.sandbox_server import SandboxServer
+from loom.tools.sandbox import HttpSandboxTransport
+from loom.tools.sandbox_server import SandboxServer
 
 
 @pytest.fixture

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from loom.config import Settings
+from loom.core.config import Settings
 from loom.tools import make_tools
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "loom"
@@ -31,7 +31,7 @@ FORBIDDEN_BROWSER_SYMBOLS = (
 
 
 def browser_source() -> str:
-    return (_SRC / "browser.py").read_text(encoding="utf-8")
+    return (_SRC / "tools" / "browser.py").read_text(encoding="utf-8")
 
 
 def make_registry(tmp_path):

@@ -5,12 +5,12 @@ from datetime import date, datetime
 
 import pytest
 
-import loom.backup
 import loom.cli
-from loom.backup import BACKUP_ROOTS, create_backup, restore_backup
+import loom.ops.backup
+from loom.gateway.pending import PENDING, PendingApproval, PendingStore
 from loom.memory import DigestStore, EpisodicStore, FactsStore, compact
-from loom.pending import PENDING, PendingApproval, PendingStore
-from loom.routines import Routine, RoutineStore
+from loom.ops.backup import BACKUP_ROOTS, create_backup, restore_backup
+from loom.ops.routines import Routine, RoutineStore
 from loom.tasks import TaskStatus, TaskStore
 
 
@@ -135,7 +135,7 @@ class _Fixed(datetime):
 
 
 def test_backup_names_collide_into_numbered_suffixes(tmp_path, monkeypatch):
-    monkeypatch.setattr(loom.backup, "datetime", _Fixed)
+    monkeypatch.setattr(loom.ops.backup, "datetime", _Fixed)
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     dest = tmp_path / "dest"
