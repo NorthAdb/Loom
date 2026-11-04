@@ -4,7 +4,7 @@ Source of truth for what this repository contains. Update this file in the same 
 
 Last updated: 2026-11-05.
 
-Gate 1–5 passed on main tip `1711d1b` (PR #19, the Gate 4 redirect-landing hardening). Gate 6 passes on this branch. The acceptance suite is 366 passed and 1 skipped with chromium installed; the commands are in [RESUME_STORY.md](RESUME_STORY.md). **In progress** is empty. Gate 7 and later are not in this tree.
+Gate 1–5 passed on main tip `1711d1b` (PR #19, the Gate 4 redirect-landing hardening). Gate 6 and Gate 7 pass on this branch. The acceptance suite is 421 passed and 1 skipped with chromium installed; the commands are in [RESUME_STORY.md](RESUME_STORY.md). **In progress** is empty. Gate 8 and later are not in this tree.
 
 ## Gate map (Gate对照)
 

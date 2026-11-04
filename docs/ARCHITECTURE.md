@@ -77,23 +77,21 @@ Coil is an architecture reference from the 2026-10-30 lock. Loom does not import
 ## What the code layout is today
 
 ```text
-src/loom/          The package model (Gate 6). Root keeps __init__.py and the
-                   compatibility shims for pre-Gate-6 import paths.
+src/loom/          The package model. The root holds only __init__.py.
   core/            Config, logging, LLM factory, LangGraph loop, runner, runtime
   memory/          Facts store, Mem0 adapter, note builder, and the Gate 6
                    Context OS: episodic log, digest, feedback, compact
   tasks/           Task state machine, store, idempotency ledger
-  gateway/         The human approval queue (pending); Gate 7 adds scope + gateway
+  gateway/         Request Scope, the Tool Gateway, and the pending queue
+  tools/           Tool registry (17 tools), drafts, sandbox dispatcher and
+                   transports/server, mail, calendar, browser
+  inbound/         The untrusted inbound seam and the simulated mail channel
+  console/         The local Operator Console (FastAPI app and Jinja2 templates)
   audit/           Append-only JSONL audit log
   ops/             Budget, backup/restore, eval, routines, checkpoints
-  tools/           Tool registry and the sandbox dispatcher/transports/server;
-                   mail, calendar, and browser keep their source at the root
-                   until the guard tests that pin those files move with them
-  inbound/ console/  Gate 7 seams, currently empty shells
-fixtures/          Sandbox demo input (fixtures/sandbox_messy/)
-scripts/           Gate demos (scripts/demo_gate1.py, scripts/demo_gate2.py,
-                   scripts/demo_gate3_memory.py, scripts/demo_gate3_calendar_mail.py,
-                   scripts/demo_gate6_tasks.py)
+fixtures/          Sandbox demo input and the simulated inbound fixtures
+                   (fixtures/sandbox_messy/, fixtures/inbound/)
+scripts/           Gate demos (scripts/demo_gate1.py through demo_gate7_inbound.py)
 docs/              Product and engineering record
 pyproject.toml     Package metadata and runtime dependencies
 Dockerfile         Sandbox service image (two stdlib-only files, non-root)
