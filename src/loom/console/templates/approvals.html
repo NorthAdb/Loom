@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Approvals</h1>
+{% if rows %}
+<table>
+  <tr><th>Pending</th><th>Routine</th><th>Tools</th><th>Created at</th><th>Decision</th></tr>
+  {% for row in rows %}
+  <tr>
+    <td>{{ row.pending_id }}</td>
+    <td>{{ row.routine_id }}</td>
+    <td>{% for call in row.tools %}{{ call.name }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+    <td>{{ row.created_at }}</td>
+    <td>
+      <form class="approve" method="post" action="/approvals/{{ row.pending_id }}/decide">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="decision" value="approve">
+        <button type="submit">Approve</button>
+      </form>
+      <form class="reject" method="post" action="/approvals/{{ row.pending_id }}/decide">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="decision" value="reject">
+        <button type="submit">Reject</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>Nothing waits for a decision.</p>
+{% endif %}
+{% endblock %}

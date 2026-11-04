@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Inbox</h1>
+{% if rows %}
+<table>
+  <tr><th>From</th><th>Subject</th><th>Authenticated</th><th>Accepted at</th><th>Task</th></tr>
+  {% for row in rows %}
+  <tr>
+    <td><a href="/inbox/{{ row.message.message_id }}">{{ row.message.from_header }}</a></td>
+    <td>{{ row.message.subject }}</td>
+    <td>{{ "yes" if row.message.authenticated else "no" }}</td>
+    <td>{{ row.accepted_at }}</td>
+    <td>{{ row.task_id }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No accepted messages.</p>
+{% endif %}
+{% endblock %}

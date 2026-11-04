@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Draft: {{ draft.subject }}</h1>
+<p class="local-only">local only — never sent</p>
+<dl>
+  <dt>To</dt>
+  <dd>{{ draft.to }}</dd>
+  <dt>Subject</dt>
+  <dd>{{ draft.subject }}</dd>
+  <dt>Created at</dt>
+  <dd>{{ draft.created_at }}</dd>
+  <dt>Status</dt>
+  <dd>{{ draft.status }}</dd>
+  <dt>Body</dt>
+  <dd><pre>{{ draft.body }}</pre></dd>
+</dl>
+{% endblock %}
