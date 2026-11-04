@@ -89,7 +89,7 @@ def test_memory_digest_episodic_feedback_compact_commands(monkeypatch, tmp_path,
 def test_memory_feedback_refuses_secrets(monkeypatch, tmp_path, capsys):
     _env(monkeypatch, tmp_path)
 
-    code, out = run(capsys, ["memory", "feedback", "add", "the key is", "ghp_0123456789abcdefghijklmnopqrstuv"])
+    code, out = run(capsys, ["memory", "feedback", "add", "the key is", "sk-0123456789abcdefghijklmnop"])
     assert code == 1 and "carries a secret" in out
     assert FeedbackStore(tmp_path).recent() == []
 

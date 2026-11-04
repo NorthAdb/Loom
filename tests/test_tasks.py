@@ -135,7 +135,7 @@ def test_blocked_task_returns_to_running(tmp_path):
 def test_create_refuses_secret_titles_and_empty_titles(tmp_path):
     store = TaskStore(tmp_path)
     with pytest.raises(ValueError, match="carries a secret"):
-        store.create("triage", "token ghp_0123456789abcdefghijklmnopqrstuv")
+        store.create("triage", "token sk-0123456789abcdefghijklmnop")
     with pytest.raises(ValueError, match="must not be empty"):
         store.create("triage", "")
     with pytest.raises(ValueError, match="500-character limit"):

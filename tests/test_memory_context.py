@@ -36,7 +36,7 @@ def test_episodic_text_is_capped_and_secret_shaped_text_is_refused(tmp_path):
 
     assert len(entry.text) == 2000
     with pytest.raises(ValueError, match="carries a secret"):
-        store.append("turn", "the key is ghp_0123456789abcdefghijklmnopqrstuv")
+        store.append("turn", "the key is sk-0123456789abcdefghijklmnop")
     assert store.count_unfolded() == 1
 
 
@@ -128,7 +128,7 @@ def test_feedback_add_and_recent_with_secret_guard(tmp_path):
     recent = store.recent()
     assert [entry.text for entry in recent] == ["never book flights before 9am", "keep replies short"]
     with pytest.raises(ValueError, match="carries a secret"):
-        store.add("owner", "password: hunter2abc123def456ghi789")
+        store.add("owner", "the api token is aaaabbbbccccddddeeeeffff1111")
 
 
 def test_context_block_composes_digest_episodic_and_feedback_with_a_cap(tmp_path):

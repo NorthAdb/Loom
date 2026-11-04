@@ -93,7 +93,7 @@ def test_a_secret_shaped_turn_is_not_logged(tmp_path):
     graph, _model = build(tmp_path, [AIMessage(content="好的")])
 
     graph.invoke(
-        {"messages": [{"role": "user", "content": "the key is ghp_0123456789abcdefghijklmnopqrstuv"}], "run_id": "r1"},
+        {"messages": [{"role": "user", "content": "the key is sk-0123456789abcdefghijklmnop"}], "run_id": "r1"},
         {"configurable": {"thread_id": "t1"}},
     )
 
