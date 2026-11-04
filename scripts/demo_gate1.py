@@ -14,9 +14,9 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
-from loom.config import Settings
-from loom.graph import build_graph
-from loom.llm import make_model
+from loom.core.config import Settings
+from loom.core.graph import build_graph
+from loom.core.llm import make_model
 
 
 class ScriptedChatModel(GenericFakeChatModel):

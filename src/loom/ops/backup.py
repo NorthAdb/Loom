@@ -13,7 +13,21 @@ from pathlib import Path, PurePosixPath
 # adding it here and pinning it in tests/test_backup.py. tasks.db and
 # context.db joined in Gate 6: a restore that dropped the task state
 # machine or the context stores would break the restart-recovery promise.
-BACKUP_ROOTS = ("facts.db", "routines.json", "approvals", "audit", "checkpoints", "tasks.db", "context.db")
+# drafts.json and inbound/ joined in Gate 7: the local draft is the
+# flagship artifact and the inbox is its provenance. scopes.json is
+# deliberately absent (ADR-019): a restore revokes authorizations rather
+# than silently re-granting them.
+BACKUP_ROOTS = (
+    "facts.db",
+    "routines.json",
+    "approvals",
+    "audit",
+    "checkpoints",
+    "tasks.db",
+    "context.db",
+    "drafts.json",
+    "inbound",
+)
 
 
 def _archive_files(data_dir: Path):

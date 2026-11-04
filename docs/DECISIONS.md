@@ -133,3 +133,18 @@ When a choice changes, add a new ADR with the date and update the docs that woul
 - **Date:** 2026-11-04
 - **Decision:** Progress and locked decisions live in this repository. [STATUS.md](STATUS.md) is what the tree contains. [ROADMAP.md](ROADMAP.md) is the plan. This file is intent. An external research page, canvas, or chat may inform a change. It does not replace these files, and it is not evidence that a feature shipped.
 - **Consequences:** ADR-010 still requires STATUS.md to move in the same change as the work. A decision change adds an ADR here and updates the docs that would otherwise be wrong. [CONTRIBUTING.md](../CONTRIBUTING.md) says the same. The 2026-11-04 research canvas informed ADR-012 through ADR-016 (https://cursor.com/canvas/store-13fa9a48-da91-4ebe-91b1-dfcb142a1f42/cf35f0d0-56da-4598-a24c-5f6b37114b0c). If that page and this repository disagree, this repository wins.
+
+## ADR-018 — The package kernel and the layout guard
+
+- **Status:** Accepted
+- **Date:** 2026-11-05
+- **Decision:** The §2.3 dependency direction governs who orchestrates whom. `loom.core.config` and `loom.core.logging` are kernel leaves every package may import (they import nothing from loom), so `memory/` or `tasks/` reading `Settings` or `is_sensitive` is not reverse flow. The disclosed sibling arrows beyond the handoff's table are: `memory/facts` and `gateway/scope` import `loom.ops.routines` (now_local, write_json_atomic), `tasks/store` imports `loom.memory.facts` (the shared secret guard), and `console/app` imports `loom.tools.drafts` (the console reads the store the draft tool writes). The root of `src/loom` holds only `__init__.py`; all compatibility shims from the Gate 6 transition are deleted and none may return. `tests/test_package_layout.py` pins the root, the critical bans (tools never imports console or cli; inbound touches only tasks, gateway.scope, the audit, and the inbox store; the console never touches the mint or the graph build; the console binds 127.0.0.1), and the no-send symbol scan runs recursively over all of `src/loom`.
+- **Consequences:** A new subpackage does not get a free pass past the guard: the layout test grows with the tree. If a kernel helper grows business meaning, it moves out of the kernel and the importers follow.
+
+## ADR-019 — Backup roots and scope retention
+
+- **Status:** Accepted
+- **Date:** 2026-11-05
+- **Decision:** `BACKUP_ROOTS` is nine: facts.db, routines.json, approvals, audit, checkpoints, tasks.db, context.db, drafts.json, and inbound. The task machine, the Context OS, the local drafts, and the inbox are durable operator state a restore must keep. `scopes.json` is deliberately excluded: scopes are short-lived authorizations, and a restore that silently re-granted them would be the wrong failure mode. After a restore, inbound work needs fresh authorization — refuse rather than assume.
+- **Consequences:** A restore revokes every outstanding scope (the fail-safe direction). Backup/restore tests pin the round trip for the task machine, the folded context, the drafts, and the inbox.
+

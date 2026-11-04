@@ -56,7 +56,13 @@ SessionDep = Annotated[dict, Depends(_open_session)]
 
 
 async def _require_csrf(request: Request) -> None:
-    """Every POST form must carry the session's csrf token."""
+    """Every POST form must carry the session's csrf token.
+
+    Dependency contract: CSRF runs before the operator check, and a valid
+    token can only come from a session — so the operator check below is
+    defense in depth, not the sole gate; the two cannot be isolated in a
+    test because a valid csrf_token already implies a session exists.
+    """
     token = (await request.form()).get("csrf_token")
     if not token or not secrets.compare_digest(str(token), request.session.get("csrf_token") or ""):
         raise Refused("missing or mismatched csrf token")

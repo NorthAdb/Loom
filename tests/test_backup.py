@@ -168,12 +168,30 @@ def test_archive_never_leaves_the_backup_roots(tmp_path):
 
 def test_task_and_context_stores_round_trip_through_backup_and_restore(tmp_path):
     """tasks.db and context.db joined BACKUP_ROOTS in Gate 6: a restore keeps the task machine."""
+    from loom.inbound import InboxStore
+    from loom.inbound.types import InboundMessage
+    from loom.tools.drafts import DraftStore
+
     data_dir = tmp_path / "data"
     _seed(data_dir)
     store = TaskStore(data_dir)
     task = store.transition(store.create("triage", "Reply to the landlord").task_id, TaskStatus.RUNNING)
     EpisodicStore(data_dir).append("turn", "an event")
     compact(data_dir)
+    DraftStore(data_dir).add(to="landlord@example.com", subject="Heating bill", body="We agree.")
+    InboxStore(data_dir).add(
+        InboundMessage(
+            message_id="sim-001",
+            channel="sim_mail",
+            from_header="owner@example.com",
+            subject="Hello",
+            body="body",
+            received_at="2026-11-05T09:00:00+08:00",
+            authenticated=True,
+        ),
+        task_id="t1",
+        scope_id=None,
+    )
 
     archive = create_backup(data_dir, tmp_path / "dest")
     _wipe(data_dir)

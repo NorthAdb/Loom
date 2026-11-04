@@ -51,7 +51,7 @@ class SandboxHandler(BaseHTTPRequestHandler):
 class SandboxServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, root: Path, host: str = "0.0.0.0", port: int = 8765) -> None:
+    def __init__(self, root: Path, host: str = "127.0.0.1", port: int = 8765) -> None:
         self.root = Path(root)
         super().__init__((host, port), SandboxHandler)
 
@@ -59,7 +59,7 @@ class SandboxServer(ThreadingHTTPServer):
 def main() -> int:
     parser = argparse.ArgumentParser(description="Loom file sandbox HTTP server.")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--host", default="0.0.0.0", help="0.0.0.0 so a published compose port reaches the container")
+    parser.add_argument("--host", default="127.0.0.1", help="compose passes 0.0.0.0 so a published port reaches the container")
     parser.add_argument("--root", default="./sandbox", help="Directory every op is jailed to.")
     args = parser.parse_args()
 

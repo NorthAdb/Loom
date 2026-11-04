@@ -21,9 +21,9 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
-from loom.calendar import HttpCalendarTransport, parse_events, summarize
-from loom.config import Settings, get_settings
-from loom.graph import build_graph
+from loom.core.config import Settings, get_settings
+from loom.core.graph import build_graph
+from loom.tools.calendar import HttpCalendarTransport, parse_events, summarize
 
 TZ = ZoneInfo("Asia/Hong_Kong")
 
