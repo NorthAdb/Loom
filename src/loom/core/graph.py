@@ -20,6 +20,8 @@ from loom.memory import (
     contains_secret,
     has_explicit_memory_intent,
 )
+from loom.memory.context import build_context_note
+from loom.memory.episodic import EpisodicStore
 from loom.ops.checkpoints import make_checkpointer
 from loom.tools import make_tools
 
@@ -85,6 +87,15 @@ def _last_human_text(state: GraphState) -> str:
     return ""
 
 
+def _log_episodic_turn(data_dir, text: str) -> None:
+    """Record the turn in the episodic log; a refusal (secret guard) or a
+    store failure never breaks the turn."""
+    try:
+        EpisodicStore(data_dir).append("turn", text)
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        logger.warning("episodic log skipped this turn", extra={"error": str(exc)})
+
+
 def build_graph(
     model: BaseChatModel,
     settings: Settings,
@@ -114,7 +125,19 @@ def build_graph(
                 memories = semantic.search(user_text, limit=settings.memory_inject_limit)
             except (RuntimeError, OSError) as exc:
                 logger.warning("semantic memory unavailable; injecting facts only", extra={"error": str(exc)})
-        return {"memory_note": build_memory_note(facts, memories, limit=settings.memory_inject_limit)}
+        return {
+            "memory_note": build_memory_note(facts, memories, limit=settings.memory_inject_limit)
+            + _context_suffix(state, settings)
+        }
+
+    def _context_suffix(state: GraphState, settings: Settings) -> str:
+        """The working-context block appended after the memory note.
+
+        Empty when there is nothing to inject or the stores are unavailable;
+        context injection must never break the turn.
+        """
+        block = build_context_note(settings.loom_data_dir, settings.context_inject_limit)
+        return f"\n{block}" if block else ""
 
     def agent(state: GraphState) -> dict:
         messages = state["messages"]
@@ -232,6 +255,8 @@ def build_graph(
 
     def post_turn(state: GraphState) -> dict:
         text = _last_human_text(state)
+        if text:
+            _log_episodic_turn(settings.loom_data_dir, text)
         if not text or not has_explicit_memory_intent(text):
             return {}
         if contains_secret(text):

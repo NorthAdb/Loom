@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="", validation_alias="LLM_BASE_URL")
     memory_enabled: bool = Field(default=True, validation_alias="LOOM_MEMORY_ENABLED")
     memory_inject_limit: int = Field(default=5, validation_alias="LOOM_MEMORY_INJECT_LIMIT")
+    # Entries (digest + episodic + feedback together) the working-context block may inject
+    context_inject_limit: int = Field(default=6, validation_alias="LOOM_CONTEXT_INJECT_LIMIT")
     ical_url: str = Field(default="", validation_alias="LOOM_ICAL_URL")
     imap_host: str = Field(default="", validation_alias="LOOM_IMAP_HOST")
     imap_port: int = Field(default=_DEFAULT_IMAP_PORT, validation_alias="LOOM_IMAP_PORT")
