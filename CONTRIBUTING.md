@@ -13,4 +13,6 @@ The repository is the source of truth for what is done, what is not, and what wa
 
 Add code under `src/loom/` only when a [docs/ROADMAP.md](docs/ROADMAP.md) item needs it. Add a dependency in `pyproject.toml` only for that item.
 
+New domain code goes in the Gate 6 package layout, not the root: `core/`, `memory/`, `tasks/`, `gateway/`, `tools/`, `inbound/`, `console/`, `audit/`, `ops/` under `src/loom/`. Do not add domain files at the `src/loom/` root; the root keeps only `__init__.py` and the compatibility shims that keep pre-Gate-6 import paths alive. Dependency direction: `cli` -> `core` -> the capability packages; `console` owns no business rules; `inbound` only creates tasks and scopes; `tools` never imports `console`.
+
 Do not fork or vendor Coil. Do not add a Coil runtime. Do not make nanobot the shell. Do not add a mail-send path, a calendar write, or an unattended browser submit. See [docs/SECURITY.md](docs/SECURITY.md).

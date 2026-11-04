@@ -2,9 +2,9 @@
 
 Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md). Decisions: [DECISIONS.md](DECISIONS.md).
 
-Last updated: 2026-11-04.
+Last updated: 2026-11-05.
 
-Gate 1–5 passed on main tip `1711d1b` (PR #19, the Gate 4 redirect-landing hardening). The acceptance suite is 321 passed and 1 skipped with chromium installed; the commands are in [RESUME_STORY.md](RESUME_STORY.md). **In progress** is empty. Gate 6 and later are not in this tree.
+Gate 1–5 passed on main tip `1711d1b` (PR #19, the Gate 4 redirect-landing hardening). Gate 6 passes on this branch. The acceptance suite is 366 passed and 1 skipped with chromium installed; the commands are in [RESUME_STORY.md](RESUME_STORY.md). **In progress** is empty. Gate 7 and later are not in this tree.
 
 ## Gate map (Gate对照)
 
@@ -17,6 +17,7 @@ Index of the acceptance gates. The rows name the phases; the detail stays in **D
 | Gate 3 | Phase 4+5 | Passed | Facts table plus optional Mem0; read-only ICS calendar; mail drafts via IMAP APPEND (no send) |
 | Gate 4 | Phase 6 | Passed | Playwright `browser_open` / `browser_fill` / `browser_submit`; request firewall and redirect-landing close. Tip `1711d1b` |
 | Gate 5 | Phase 7 | Passed | Daily token budget, `loom stats`, backup/restore, `loom eval`, GitHub Actions CI, [RESUME_STORY.md](RESUME_STORY.md) |
+| Gate 6 | Phase A | Passed | Package model over the flat `src/loom` modules; task state machine with restart recovery and idempotent effect receipts; Context OS (episodic log, digest, feedback, transactional compact) with capped injection; `loom tasks`, `loom memory digest/episodic/feedback/compact`; backup roots grow to seven |
 
 ## Done
 
@@ -46,6 +47,10 @@ Index of the acceptance gates. The rows name the phases; the detail stays in **D
 - [x] Phase 7 backup and restore: `loom backup [destination]` zips exactly the five data-dir roots (`facts.db`, `routines.json`, `approvals/`, `audit/`, `checkpoints/`) into `loom-backup-YYYYMMDD-HHMMSS.zip` (local time, collision-safe `-1`/`-2` suffixes, deflated, missing roots simply absent, destination default `./backups` relative to the working directory) and prints the archive path with the member count; `loom restore <archive> [--force]` writes exactly the archive's members back into the data dir and prints each restored path — every member is validated relative and resolved strictly inside the data dir before anything is written, so a crafted archive (`../`, absolute paths) refuses with a ValueError and writes nothing (zip-slip), and existing targets refuse naming the paths unless `--force`; an empty data dir produces a valid empty archive and restores as a no-op; spend ledgers, `memory/`, and `.env` are never in an archive, and `facts.db` is copied as the file stands so a backup should run while Loom is idle (pinned by `tests/test_backup.py`)
 - [x] Phase 7 regression eval harness: `loom eval [name]` runs the declarative cases in `tests/eval/cases/*.json` through the real graph (scripted model, fake browser/calendar/mail transports over the real seams, the real jailed local sandbox, sqlite checkpoints) in a fresh temp data dir per case — a case scripts the model's tool calls plus closing text, an optional gate decision for interrupts, a token budget, seed facts, and fixture pages/ICS; expectations judge the interrupt, the budget refusal (with its audit row), the final text, the injected memory note, transport record counts, and spend; an `expect_fail` canary must judge red or the whole run fails, and the rate excludes expect_fail cases; full mode exits 0 at rate >= 80% with a red canary, one-case mode exits on that case's own verdict, a missing cases dir says to run from the repository root; demo `scripts/demo_gate5.py` (budget refusal through the real chat REPL, backup/restore round trip, eval summary)
 - [x] Phase 7 resume story and daily-operation docs: `docs/RESUME_STORY.md` states the problem, the running architecture with doc references, seven claims each with its number and the exact command that reproduces it (suite, guarded tool count, eval rate, seven keyless demos with 22 scenarios, audit fields, budget brake, backup roots), and the tradeoffs (fill ungated / submit gated, token budget not dollars, snapshots deferred, facts win conflicts, resumes not re-budgeted); the README gains a Daily operation section (chat, worker, approvals, facts, stats, eval, the budget keys) and the backup/restore drill, the Stack table gains the Browser and CI rows, and the install line covers the browser extra
+- [x] Phase A package model: the flat `src/loom/*.py` modules collapse into the Gate 6 package tree — `core/` (config, logging, llm, graph, runner, runtime), `memory/` (facts + semantic split), `tasks/`, `gateway/` (pending), `audit/log.py`, `ops/` (budget, backup, eval, routines, checkpoints), `tools/` (registry + sandbox), and empty `inbound/` + `console/` shells — with every pre-Gate-6 import path still importable (package `__init__` re-exports for memory/tools/audit/cli, identity-alias shims where tests patch module globals, and mail/browser/calendar source left at the root because the guard tests pin those files by path; the pins move with the files in Gate 7's close-out). Internal imports all use canonical paths. CONTRIBUTING forbids new root-level domain files
+- [x] Phase A task state: `loom/tasks/machine.py` is the machine (created, running, waiting_approval, blocked, and the terminal completed/failed/cancelled; nothing skips the human gate and nothing leaves a terminal state) and `loom/tasks/store.py` keeps tasks, the append-only transition history, and the (task_id, effect_key) idempotency ledger in `<data dir>/tasks.db` — a reopen after a process restart sees the same rows, `recover()` moves a stuck running task to blocked while waiting_approval stays waiting (a human decision never auto-executes), `run_once` executes an external side effect at most once per key (failures record nothing and retry), creation refuses secret-shaped titles and duplicate idempotency keys, and stored strings are capped (title 500, records 2000)
+- [x] Phase A Context OS: `memory/episodic.py` (append-only events; every chat turn logs itself post-turn, secret-shaped text refused), `memory/feedback.py` (owner corrections via `loom memory feedback add`), `memory/digest.py` (single-row digest with no public setter), and `memory/compact.py` — `compact()` folds the oldest unfolded entries into the digest in ONE transaction, so a failure rolls the whole run back and keeps the old digest, and compact never writes the facts table (a summary is never an authoritative fact). `core/graph.py` appends the working-context block after the facts note (digest, newest episodes, feedback, each clipped to 200 chars, total capped by `LOOM_CONTEXT_INJECT_LIMIT`, default 6); any store failure degrades to no context
+- [x] Phase A CLI and durability: `loom tasks list [--status] | show <id|prefix> | recover`, `loom memory digest | episodic [--limit N] [--all] | feedback add|list | compact`; doctor probes the tasks and context stores; `BACKUP_ROOTS` grows from five to seven (tasks.db, context.db) with a round-trip test proving a restore keeps the task machine and the folded context; demo `scripts/demo_gate6_tasks.py` (lifecycle across a reopen, restart recovery, one-key-one-effect idempotency, compact and the injected block)
 
 ## In progress
 
@@ -53,14 +58,7 @@ Index of the acceptance gates. The rows name the phases; the detail stays in **D
 
 ## Not started
 
-Gate 6 and later only. None of these are started. Priority, order, and the hard boundaries: [ROADMAP.md](ROADMAP.md).
-
-### Gate 6 — Context OS, including Task State (P0)
-
-Mem0 stays optional and is not part of this gate.
-
-- [ ] Digest, episodic log, feedback, and compact, on top of the facts table
-- [ ] Task State: a persistent state machine, restart recovery, and idempotent external side effects
+Gate 7 and later only. None of these are started. Priority, order, and the hard boundaries: [ROADMAP.md](ROADMAP.md).
 
 ### Gate 7 — Inbound, Request Scope, Operator Console (P0)
 
