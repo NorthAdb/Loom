@@ -33,3 +33,6 @@ sandbox/
 .vscode/
 .DS_Store
 *.swp
+
+# Local handoffs (not for git)
+handoffs/
