@@ -276,6 +276,8 @@ loom chat                        # the REPL; side-effect tools pause for approve
 loom worker                      # keep routines firing on their cron schedules
 loom approvals list              # resolve anything the gate held while you were away
 loom memory facts                # what Loom firmly knows; `set`/`del` to author it
+loom memory digest|episodic|feedback|compact   # the working set: fold recent activity into the digest
+loom tasks list|show|recover     # the task state machine; recover after a restart
 loom stats                       # budget, token spend, approval and failure counters
 loom eval                        # regression confidence: cases must stay green, the canary must stay red
 ```
@@ -296,6 +298,8 @@ python scripts/demo_gate3_memory.py         # facts, the memory note, and the ex
 python scripts/demo_gate3_calendar_mail.py  # calendar summaries and draft gating
 python scripts/demo_gate4_browser.py        # browser fill behind the human gate
 python scripts/demo_gate5.py                # budget brake, backup/restore, eval summary
+```
+python scripts/demo_gate6_tasks.py          # task state machine and the Context OS (Gate 6)
 ```
 
 ### Backup and restore

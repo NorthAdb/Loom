@@ -8,9 +8,10 @@ import pytest
 import loom.backup
 import loom.cli
 from loom.backup import BACKUP_ROOTS, create_backup, restore_backup
-from loom.memory import FactsStore
+from loom.memory import DigestStore, EpisodicStore, FactsStore, compact
 from loom.pending import PENDING, PendingApproval, PendingStore
 from loom.routines import Routine, RoutineStore
+from loom.tasks import TaskStatus, TaskStore
 
 
 def _wipe(data_dir):
@@ -148,7 +149,7 @@ def test_backup_names_collide_into_numbered_suffixes(tmp_path, monkeypatch):
     ]
 
 
-def test_archive_never_leaves_the_five_roots(tmp_path):
+def test_archive_never_leaves_the_backup_roots(tmp_path):
     data_dir = tmp_path / "data"
     (data_dir / "audit").mkdir(parents=True)
     (data_dir / "audit" / "20261101.jsonl").write_text("{}\n", encoding="utf-8")
@@ -163,6 +164,30 @@ def test_archive_never_leaves_the_five_roots(tmp_path):
 
     with zipfile.ZipFile(archive) as zf:
         assert zf.namelist() == ["routines.json", "audit/20261101.jsonl"]
+
+
+def test_task_and_context_stores_round_trip_through_backup_and_restore(tmp_path):
+    """tasks.db and context.db joined BACKUP_ROOTS in Gate 6: a restore keeps the task machine."""
+    data_dir = tmp_path / "data"
+    _seed(data_dir)
+    store = TaskStore(data_dir)
+    task = store.transition(store.create("triage", "Reply to the landlord").task_id, TaskStatus.RUNNING)
+    EpisodicStore(data_dir).append("turn", "an event")
+    compact(data_dir)
+
+    archive = create_backup(data_dir, tmp_path / "dest")
+    _wipe(data_dir)
+    restore_backup(archive, data_dir, overwrite=False)
+
+    restored = TaskStore(data_dir).get(task.task_id)
+    assert restored.status is TaskStatus.RUNNING
+    assert len(TaskStore(data_dir).history(task.task_id)) == 2
+    # The event was compacted before the backup, so it lives in the digest
+    # as a folded row, and the restore keeps both sides of that state.
+    assert "an event" in DigestStore(data_dir).get()
+    episodic = EpisodicStore(data_dir)
+    assert episodic.count_unfolded() == 0
+    assert episodic.recent(1, unfolded_only=False)[0].text == "an event"
 
 
 def test_cli_backup_and_restore_round_trip(monkeypatch, tmp_path, capsys):

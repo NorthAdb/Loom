@@ -12,7 +12,7 @@ The core loop lives in `src/loom`. `loom chat` reads a line and invokes a LangGr
 2. **LangGraph.** Primary orchestration. The graph chooses tools, decides when to stop, and decides when to ask for approval. This is the center of the system.
 3. **Tools and MCP (calendar, mail, and browser implemented).** Capabilities are tools. The calendar read tools (`calendar_list_events`, `calendar_summarize_range` over an ICS feed), the mail draft tools (`mail_create_draft`, `mail_update_draft` over IMAP), and the browser fill tools (`browser_open`, `browser_fill`, `browser_submit` over headless Playwright chromium) are native: each transport is built from Settings, credentials never enter tool arguments, and unconfigured tools stay in the registry but raise a readable error. The browser transport enforces the host allowlist (loopback plus `LOOM_BROWSER_ALLOWED_HOSTS`) inside the transport, and `browser_submit`'s approval payload is the page's real state read back from the browser via `ToolSpec.approval_context`. MCP remains the intended way to attach further external capabilities. No MCP servers are configured in this repository. Gate 9 is the registry plan (schema fingerprint, per-server credentials, untrusted return values). It is not built.
 4. **Memory (implemented baseline).** Two stores with one priority rule. The self-owned facts table (`FactsStore` over `<data dir>/facts.db`) holds authoritative facts and preferences, managed through `loom memory facts`; upsert refuses secret-bearing keys and values. Semantic recall is self-hosted Mem0 (`Mem0SemanticMemory`: openai-compatible chat and embedding models, a local qdrant vector store and history db under `<data dir>/memory/`) behind the `SemanticMemory` protocol, with a no-op implementation when `LOOM_MEMORY_ENABLED` is false; endpoint failures degrade to a facts-only note instead of crashing the turn. Each turn `pre_agent` renders the note (`build_memory_note`): facts first labeled 权威, Mem0 results after labeled 参考, capped at `LOOM_MEMORY_INJECT_LIMIT`, with an explicit instruction to prefer the facts table on conflict. `post_turn` writes a chat message back to semantic memory only when it uses explicit preference/fact language, and refuses anything that looks like a secret. That baseline is what the tree contains. The Gate 6 target, which is not built, adds a digest, an episodic log, feedback, compact, and Task State on top of the facts table. It does not add a thick RAG store, and it does not make Mem0 the authority. See ADR-013 in [DECISIONS.md](DECISIONS.md).
-5. **Docker sandbox.** Single-host Docker is the runtime. Local file work happens inside the sandbox, which exists now: a jailed dispatcher in `src/loom/sandbox.py` reached either in-process or over HTTP from the `loom-sandbox` compose service (non-root, read-only root filesystem, only the workspace volume mounted). The jail rejects every path that resolves outside the sandbox root, so both transports enforce the same boundary.
+5. **Docker sandbox.** Single-host Docker is the runtime. Local file work happens inside the sandbox, which exists now: a jailed dispatcher in `src/loom/tools/sandbox.py` reached either in-process or over HTTP from the `loom-sandbox` compose service (non-root, read-only root filesystem, only the workspace volume mounted). The jail rejects every path that resolves outside the sandbox root, so both transports enforce the same boundary.
 
 ## Approval gate
 
@@ -77,13 +77,23 @@ Coil is an architecture reference from the 2026-10-30 lock. Loom does not import
 ## What the code layout is today
 
 ```text
-src/loom/          Config, logging, tool registry, sandbox dispatcher and transports,
-                   sandbox HTTP server, audit log, memory (facts store, Mem0 adapter,
-                   note builder), read-only calendar (ICS fetch, parse, summarize),
-                   mail drafts (IMAP append/replace), LangGraph loop, CLI
+src/loom/          The package model (Gate 6). Root keeps __init__.py and the
+                   compatibility shims for pre-Gate-6 import paths.
+  core/            Config, logging, LLM factory, LangGraph loop, runner, runtime
+  memory/          Facts store, Mem0 adapter, note builder, and the Gate 6
+                   Context OS: episodic log, digest, feedback, compact
+  tasks/           Task state machine, store, idempotency ledger
+  gateway/         The human approval queue (pending); Gate 7 adds scope + gateway
+  audit/           Append-only JSONL audit log
+  ops/             Budget, backup/restore, eval, routines, checkpoints
+  tools/           Tool registry and the sandbox dispatcher/transports/server;
+                   mail, calendar, and browser keep their source at the root
+                   until the guard tests that pin those files move with them
+  inbound/ console/  Gate 7 seams, currently empty shells
 fixtures/          Sandbox demo input (fixtures/sandbox_messy/)
 scripts/           Gate demos (scripts/demo_gate1.py, scripts/demo_gate2.py,
-                   scripts/demo_gate3_memory.py, scripts/demo_gate3_calendar_mail.py)
+                   scripts/demo_gate3_memory.py, scripts/demo_gate3_calendar_mail.py,
+                   scripts/demo_gate6_tasks.py)
 docs/              Product and engineering record
 pyproject.toml     Package metadata and runtime dependencies
 Dockerfile         Sandbox service image (two stdlib-only files, non-root)

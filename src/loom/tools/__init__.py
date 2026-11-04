@@ -10,9 +10,9 @@ from langchain_core.tools import BaseTool, tool
 
 from loom.browser import PlaywrightBrowserTransport, render_page_state
 from loom.calendar import HttpCalendarTransport, parse_events, summarize
-from loom.config import Settings
+from loom.core.config import Settings
 from loom.mail import MAIL_NOT_CONFIGURED, ImapMailTransport, MailTransport, build_draft_message
-from loom.sandbox import HttpSandboxTransport, LocalSandboxTransport, SandboxTransport
+from loom.tools.sandbox import HttpSandboxTransport, LocalSandboxTransport, SandboxTransport
 
 _CALENDAR_NOT_CONFIGURED = "calendar is not configured; set LOOM_ICAL_URL in .env"
 _RANGES = {"today": (0, 1, "today"), "tomorrow": (1, 2, "tomorrow"), "week": (0, 7, "the next 7 days")}

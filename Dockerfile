@@ -3,8 +3,8 @@ FROM python:3.12-slim
 RUN useradd --uid 10001 --create-home loom
 
 WORKDIR /app
-COPY src/loom/sandbox.py sandbox.py
-COPY src/loom/sandbox_server.py sandbox_server.py
+COPY src/loom/tools/sandbox.py sandbox.py
+COPY src/loom/tools/sandbox_server.py sandbox_server.py
 
 USER loom
 EXPOSE 8765

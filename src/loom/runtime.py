@@ -1,21 +1,11 @@
-"""One build path for the compiled graph: chat, the routine runner, and the worker all use it."""
+"""Compatibility shim: the module moved to loom.core.runtime.
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+The shim aliases sys.modules so patches applied to `loom.runtime` (the test
+seam for make_model) reach the live open_graph.
+"""
 
-from loom.checkpoints import open_checkpointer
-from loom.config import Settings
-from loom.graph import build_graph
-from loom.llm import make_model
+import sys
 
+from loom.core import runtime
 
-@contextmanager
-def open_graph(settings: Settings) -> Iterator:
-    """Yield the compiled graph over the checkpoint sqlite file.
-
-    The sqlite connection opens for the with-block and closes on exit, so every
-    caller (chat REPL, one routine run, one approval resume) gets the same build
-    and owns its own connection.
-    """
-    with open_checkpointer(settings.loom_data_dir) as checkpointer:
-        yield build_graph(make_model(settings), settings, checkpointer)
+sys.modules[__name__] = runtime
