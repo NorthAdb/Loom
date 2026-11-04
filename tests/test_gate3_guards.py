@@ -31,8 +31,9 @@ IMAP_VERBS = {"uid", "append", "select", "login", "logout"}
 
 
 def source_text() -> str:
-    roots = [*_SRC.glob("*.py"), *(_SRC / "tools").glob("*.py")]
-    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(roots))
+    # Every module in the package, recursively: a forbidden symbol must not
+    # hide in a subpackage the day one is added.
+    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(_SRC.rglob("*.py")))
 
 
 def make_registry(tmp_path):
