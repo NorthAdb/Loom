@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loom console</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; color: #1a1a1a; }
+    nav a { margin-right: 1.25rem; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 0.4rem 0.7rem; text-align: left; vertical-align: top; }
+    th { background: #f4f4f4; }
+    dl dt { font-weight: bold; margin-top: 0.8rem; }
+    dl dd { margin: 0.2rem 0 0 0; }
+    pre { white-space: pre-wrap; background: #f8f8f8; padding: 0.6rem; border: 1px solid #ddd; }
+    .local-only { color: #8a1f1f; font-weight: bold; }
+    form.approve, form.reject { display: inline; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/inbox">Inbox</a>
+    <a href="/drafts">Drafts</a>
+    <a href="/approvals">Approvals</a>
+    <a href="/audit">Audit</a>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

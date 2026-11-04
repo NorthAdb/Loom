@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Audit</h1>
+{% if correlation_id %}
+<p>Trace: {{ correlation_id }}</p>
+{% endif %}
+{% if rows %}
+<table>
+  <tr><th>Timestamp</th><th>Actor</th><th>Tool</th><th>Decision</th><th>Correlation</th></tr>
+  {% for row in rows %}
+  <tr>
+    <td>{{ row.ts }}</td>
+    <td>{{ row.actor }}</td>
+    <td>{{ row.tool }}</td>
+    <td>{{ row.decision }}</td>
+    <td>{{ row.get("correlation_id") or "-" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No audit rows.</p>
+{% endif %}
+{% endblock %}

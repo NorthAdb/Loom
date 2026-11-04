@@ -1,8 +1,8 @@
 from conftest import ScriptedChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 
-from loom.config import Settings
-from loom.graph import MEMORY_REFUSAL, build_graph
+from loom.core.config import Settings
+from loom.core.graph import MEMORY_REFUSAL, build_graph
 from loom.memory import FactsStore
 
 

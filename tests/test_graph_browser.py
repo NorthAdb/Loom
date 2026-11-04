@@ -6,10 +6,10 @@ from conftest import FakeBrowserTransport, ScriptedChatModel, read_audit, tool_c
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
-from loom.browser import _PASSWORD_MASK, BrowserField, PageState
-from loom.config import Settings
-from loom.graph import _APPROVAL_SIZE_LIMIT, build_graph
+from loom.core.config import Settings
+from loom.core.graph import _APPROVAL_SIZE_LIMIT, build_graph
 from loom.tools import make_tools
+from loom.tools.browser import _PASSWORD_MASK, BrowserField, PageState
 
 URL = "http://127.0.0.1:9/form"
 

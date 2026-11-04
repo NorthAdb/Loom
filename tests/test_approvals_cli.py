@@ -2,9 +2,9 @@ from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 
 import loom.cli
-import loom.runtime
-from loom.pending import PendingStore
-from loom.routines import Routine, RoutineStore
+import loom.core.runtime
+from loom.gateway.pending import PendingStore
+from loom.ops.routines import Routine, RoutineStore
 
 
 def setup_env(monkeypatch, tmp_path):
@@ -23,7 +23,7 @@ def add_routine(monkeypatch, tmp_path, routine_id="daily_tidy"):
 def patch_model(monkeypatch, scripted):
     """Patch one shared model instance; a lambda that rebuilds it would restart the script on resume."""
     model = ScriptedChatModel(messages=iter(scripted))
-    monkeypatch.setattr(loom.runtime, "make_model", lambda settings: model)
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda settings: model)
     return model
 
 

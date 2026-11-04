@@ -13,8 +13,8 @@ import pytest
 from conftest import FakeMailTransport
 
 from loom.audit import summarize_args
-from loom.config import Settings
-from loom.logging import is_sensitive
+from loom.core.config import Settings
+from loom.core.logging import is_sensitive
 from loom.tools import make_tools
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "loom"
@@ -31,7 +31,9 @@ IMAP_VERBS = {"uid", "append", "select", "login", "logout"}
 
 
 def source_text() -> str:
-    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(_SRC.glob("*.py")))
+    # Every module in the package, recursively: a forbidden symbol must not
+    # hide in a subpackage the day one is added.
+    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(_SRC.rglob("*.py")))
 
 
 def make_registry(tmp_path):
@@ -47,10 +49,12 @@ def test_registry_side_effect_flags_are_exact(tmp_path):
         "propose_sandbox_note", "calendar_list_events", "calendar_summarize_range",
         "mail_create_draft", "mail_update_draft",
         "browser_open", "browser_fill", "browser_submit",
+        "draft_create_local",
     }
     assert {name for name, spec in registry.items() if spec.side_effect} == {
         "write_file", "mkdir", "move_file", "delete_file", "propose_sandbox_note",
         "mail_create_draft", "mail_update_draft", "browser_submit",
+        "draft_create_local",
     }
     assert {name for name, spec in registry.items() if not spec.side_effect} == {
         "get_time", "echo", "list_dir", "read_file",
@@ -65,7 +69,7 @@ def test_forbidden_symbols_never_appear_in_source(symbol):
 
 
 def test_mail_module_uses_only_draft_and_read_imap_verbs():
-    text = (_SRC / "mail.py").read_text(encoding="utf-8")
+    text = (_SRC / "tools" / "mail.py").read_text(encoding="utf-8")
 
     verbs = set(re.findall(r"client\.(\w+)\(", text))
     module_uses = set(re.findall(r"imaplib\.(IMAP4_SSL|IMAP4\.error)", text))

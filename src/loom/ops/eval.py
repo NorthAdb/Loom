@@ -22,7 +22,11 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
 from loom.audit.log import AuditLog
-from loom.browser import (
+from loom.core.config import Settings
+from loom.core.graph import build_graph
+from loom.memory import FactsStore
+from loom.ops.budget import BudgetGuard, SpendLedger, turn_tokens
+from loom.tools.browser import (
     _PASSWORD_MASK,
     BrowserField,
     PageState,
@@ -30,10 +34,6 @@ from loom.browser import (
     _ensure_allowed,
     _parse_allowed_hosts,
 )
-from loom.core.config import Settings
-from loom.core.graph import build_graph
-from loom.memory import FactsStore
-from loom.ops.budget import BudgetGuard, SpendLedger, turn_tokens
 
 BUDGET_REJECTED_REASON = "daily budget exceeded"
 

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Inbox: {{ record.message.subject }}</h1>
+<dl>
+  <dt>From</dt>
+  <dd>{{ record.message.from_header }}</dd>
+  <dt>Authenticated</dt>
+  <dd>{{ "yes" if record.message.authenticated else "no" }}</dd>
+  <dt>Received at</dt>
+  <dd>{{ record.message.received_at }}</dd>
+  <dt>Accepted at</dt>
+  <dd>{{ record.accepted_at }}</dd>
+  <dt>Task</dt>
+  <dd>{{ record.task_id }}</dd>
+  <dt>Scope</dt>
+  <dd>{{ record.scope_id if record.scope_id else "none" }}</dd>
+  <dt>Body</dt>
+  <dd><pre>{{ record.message.body }}</pre></dd>
+</dl>
+{% endblock %}

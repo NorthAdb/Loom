@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,console]"
       - run: ruff check src tests
       - run: pytest -q
 
@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,console]"
       # Installed inline so the locked dev extra stays untouched.
       - run: pip install pip-audit
       # Advisory only: a vulnerability finding must not red the run.

@@ -1,0 +1,9 @@
+{
+  "message_id": "sim-004",
+  "channel": "sim_mail",
+  "from_header": "owner@example.com",
+  "subject": "RSVP for the team offsite",
+  "body": "Please draft a reply to ops@team.example: I will attend the offsite on the 12th, arriving the evening before, and I am vegetarian for the dinner menu.",
+  "received_at": "2026-11-05T09:15:00+08:00",
+  "authenticated": true
+}

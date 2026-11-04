@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Drafts</h1>
+<p>Drafts are written for human review and stay on this machine.</p>
+{% if rows %}
+<table>
+  <tr><th>To</th><th>Subject</th><th>Body</th><th>Created at</th><th>Status</th></tr>
+  {% for row in rows %}
+  <tr>
+    <td><a href="/drafts/{{ row.draft_id }}">{{ row.to }}</a></td>
+    <td>{{ row.subject }}</td>
+    <td>{{ row.body }}</td>
+    <td>{{ row.created_at }}</td>
+    <td class="local-only">local only — never sent</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No drafts.</p>
+{% endif %}
+{% endblock %}

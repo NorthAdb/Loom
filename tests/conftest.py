@@ -5,7 +5,8 @@ import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
-from loom.browser import (
+from loom.core.config import get_settings
+from loom.tools.browser import (
     _PASSWORD_MASK,
     BrowserField,
     PageState,
@@ -13,7 +14,6 @@ from loom.browser import (
     _ensure_allowed,
     _parse_allowed_hosts,
 )
-from loom.config import get_settings
 
 
 class ScriptedChatModel(GenericFakeChatModel):

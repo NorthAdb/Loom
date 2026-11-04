@@ -7,9 +7,9 @@ from email import message_from_bytes, policy
 import pytest
 from conftest import FakeMailTransport
 
-from loom.config import ConfigError, Settings
-from loom.mail import ImapMailTransport, _message_id, build_draft_message
+from loom.core.config import ConfigError, Settings
 from loom.tools import make_tools
+from loom.tools.mail import ImapMailTransport, _message_id, build_draft_message
 
 
 def make_settings(tmp_path, **overrides):
@@ -169,7 +169,7 @@ class FakeIMAPClient:
 
 
 def _patched_imap(monkeypatch, client):
-    monkeypatch.setattr("loom.mail.imaplib.IMAP4_SSL", lambda host, port: client)
+    monkeypatch.setattr("loom.tools.mail.imaplib.IMAP4_SSL", lambda host, port: client)
 
 
 def _writes(client):
@@ -359,7 +359,7 @@ class _LoginFailsClient:
 
 def test_imap_errors_have_no_cause_chain(monkeypatch, tmp_path):
     client = _LoginFailsClient()
-    monkeypatch.setattr("loom.mail.imaplib.IMAP4_SSL", lambda host, port: client)
+    monkeypatch.setattr("loom.tools.mail.imaplib.IMAP4_SSL", lambda host, port: client)
     settings = make_settings(tmp_path, mail_password="secret-pass-42")
     transport = ImapMailTransport(settings)
 
@@ -390,7 +390,7 @@ class _LoginAndLogoutFailClient:
 
 def test_login_failure_survives_a_failing_logout_and_still_scrubs_the_password(monkeypatch, tmp_path):
     client = _LoginAndLogoutFailClient()
-    monkeypatch.setattr("loom.mail.imaplib.IMAP4_SSL", lambda host, port: client)
+    monkeypatch.setattr("loom.tools.mail.imaplib.IMAP4_SSL", lambda host, port: client)
     settings = make_settings(tmp_path, mail_password="secret-pass-42")
     transport = ImapMailTransport(settings)
 

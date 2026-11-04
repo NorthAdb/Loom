@@ -5,7 +5,7 @@ import sqlite3
 from conftest import ScriptedChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 
-from loom.config import Settings
+from loom.core.config import Settings
 from loom.core.graph import build_graph
 from loom.memory import DigestStore, EpisodicStore, FactsStore, FeedbackStore, compact
 

@@ -33,7 +33,21 @@ class AuditLog:
     def __init__(self, data_dir: Path) -> None:
         self._dir = Path(data_dir) / "audit"
 
-    def append(self, *, run_id: str, actor: str, tool: str, args: dict[str, Any], decision: str) -> None:
+    def append(
+        self,
+        *,
+        run_id: str,
+        actor: str,
+        tool: str,
+        args: dict[str, Any],
+        decision: str,
+        correlation_id: str | None = None,
+    ) -> None:
+        """Append one record; Gate 7 rows carry the scope's correlation_id.
+
+        Old rows and callers without a scope stay exactly as they were: the
+        field is simply absent when no correlation_id is given.
+        """
         record = {
             "ts": datetime.now(UTC).isoformat(),
             "run_id": run_id,
@@ -42,6 +56,8 @@ class AuditLog:
             "args": summarize_args(args),
             "decision": decision,
         }
+        if correlation_id is not None:
+            record["correlation_id"] = correlation_id
         self._dir.mkdir(parents=True, exist_ok=True)
         path = self._dir / f"{datetime.now().strftime('%Y%m%d')}.jsonl"
         with path.open("a", encoding="utf-8") as f:

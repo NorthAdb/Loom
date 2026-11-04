@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from conftest import CALENDAR_ICS, FakeCalendarTransport
 
-from loom.calendar import HttpCalendarTransport, _is_loopback, parse_events, summarize
-from loom.config import Settings
+from loom.core.config import Settings
 from loom.tools import make_tools
+from loom.tools.calendar import HttpCalendarTransport, _is_loopback, parse_events, summarize
 
 TZ = ZoneInfo("Asia/Hong_Kong")
 WINDOW_START = datetime(2026, 11, 1, tzinfo=TZ)

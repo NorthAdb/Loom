@@ -4,7 +4,7 @@ import json
 from datetime import date, timedelta
 
 import loom.cli
-from loom.budget import SpendLedger
+from loom.ops.budget import SpendLedger
 
 
 def test_stats_on_an_empty_data_dir(monkeypatch, tmp_path, capsys):

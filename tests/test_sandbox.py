@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from loom.sandbox import handle
+from loom.tools.sandbox import handle
 
 
 def make_sandbox(tmp_path):
@@ -183,7 +183,7 @@ def test_missing_argument_raises_not_crashes(tmp_path):
 
 
 def test_transports_share_the_dispatcher(tmp_path):
-    from loom.sandbox import LocalSandboxTransport
+    from loom.tools.sandbox import LocalSandboxTransport
 
     (tmp_path / "a.txt").write_text("via local", encoding="utf-8")
 

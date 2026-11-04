@@ -3,12 +3,12 @@ import json
 from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 
-import loom.runtime
-from loom.budget import SpendLedger
-from loom.config import Settings
-from loom.pending import PendingStore
-from loom.routines import Routine, RoutineStore
-from loom.runner import resume_pending, run_routine
+import loom.core.runtime
+from loom.core.config import Settings
+from loom.core.runner import resume_pending, run_routine
+from loom.gateway.pending import PendingStore
+from loom.ops.budget import SpendLedger
+from loom.ops.routines import Routine, RoutineStore
 
 
 def make_settings(tmp_path, **overrides):
@@ -34,7 +34,7 @@ def test_read_only_routine_completes_and_audits_the_trigger(monkeypatch, tmp_pat
     store, pending = make_stores(tmp_path)
     routine = store.add(Routine(id="daily_stats", name="Stats", cron="30 8 * * *", prompt="count the files"))
     monkeypatch.setattr(
-        loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="10 files total")]))
+        loom.core.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="10 files total")]))
     )
 
     outcome = run_routine(routine, settings, store, pending)
@@ -56,7 +56,7 @@ def test_write_routine_pends_and_writes_nothing(monkeypatch, tmp_path):
     settings = make_settings(tmp_path)
     routine, store, pending = add_write_routine(tmp_path)
     monkeypatch.setattr(
-        loom.runtime,
+        loom.core.runtime,
         "make_model",
         lambda s: ScriptedChatModel(
             messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"}), AIMessage(content="written")])
@@ -84,7 +84,7 @@ def test_approve_resume_over_a_fresh_graph_executes(monkeypatch, tmp_path):
     settings = make_settings(tmp_path)
     routine, store, pending = add_write_routine(tmp_path)
     monkeypatch.setattr(
-        loom.runtime,
+        loom.core.runtime,
         "make_model",
         lambda s: ScriptedChatModel(
             messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"})])
@@ -96,7 +96,7 @@ def test_approve_resume_over_a_fresh_graph_executes(monkeypatch, tmp_path):
 
     # A separate scripted model proves the resumed run does not reuse the first graph's model.
     monkeypatch.setattr(
-        loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="file written")]))
+        loom.core.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="file written")]))
     )
     answer = resume_pending(pending_id, "approve", settings, pending).answer
 
@@ -115,7 +115,7 @@ def test_reject_resume_executes_nothing(monkeypatch, tmp_path):
     settings = make_settings(tmp_path)
     routine, store, pending = add_write_routine(tmp_path)
     monkeypatch.setattr(
-        loom.runtime,
+        loom.core.runtime,
         "make_model",
         lambda s: ScriptedChatModel(
             messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"})])
@@ -124,7 +124,7 @@ def test_reject_resume_executes_nothing(monkeypatch, tmp_path):
     outcome = run_routine(routine, settings, store, pending)
     assert outcome.outcome == "pending"
 
-    monkeypatch.setattr(loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([])))
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([])))
     answer = resume_pending(outcome.pending_id, "reject", settings, pending).answer
 
     assert "rejected" in answer
@@ -139,7 +139,7 @@ def test_resumed_run_that_hits_the_gate_again_stays_pending(monkeypatch, tmp_pat
     settings = make_settings(tmp_path)
     routine, store, pending = add_write_routine(tmp_path)
     monkeypatch.setattr(
-        loom.runtime,
+        loom.core.runtime,
         "make_model",
         lambda s: ScriptedChatModel(
             messages=iter([tool_call_msg("write_file", {"path": "a.txt", "content": "one"}, "call_a")])
@@ -150,7 +150,7 @@ def test_resumed_run_that_hits_the_gate_again_stays_pending(monkeypatch, tmp_pat
     pending_id = outcome.pending_id
 
     monkeypatch.setattr(
-        loom.runtime,
+        loom.core.runtime,
         "make_model",
         lambda s: ScriptedChatModel(
             messages=iter([tool_call_msg("write_file", {"path": "b.txt", "content": "two"}, "call_b")])
@@ -167,7 +167,7 @@ def test_resumed_run_that_hits_the_gate_again_stays_pending(monkeypatch, tmp_pat
     assert json.loads(record.tools[0]["args"]) == {"path": "b.txt", "content": "two"}
 
     monkeypatch.setattr(
-        loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="done two")]))
+        loom.core.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="done two")]))
     )
     answer = resume_pending(pending_id, "approve", settings, pending).answer
 
@@ -191,7 +191,7 @@ def test_double_resume_raises_already(monkeypatch, tmp_path):
     settings = make_settings(tmp_path)
     routine, store, pending = add_write_routine(tmp_path)
     monkeypatch.setattr(
-        loom.runtime,
+        loom.core.runtime,
         "make_model",
         lambda s: ScriptedChatModel(
             messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"})])
@@ -201,7 +201,7 @@ def test_double_resume_raises_already(monkeypatch, tmp_path):
     assert outcome.outcome == "pending"
     pending_id = outcome.pending_id
     monkeypatch.setattr(
-        loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="file written")]))
+        loom.core.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="file written")]))
     )
     assert resume_pending(pending_id, "approve", settings, pending).answer == "file written"
 
@@ -220,7 +220,7 @@ def test_routine_refused_at_the_budget_limit(monkeypatch, tmp_path):
     routine = store.add(Routine(id="daily_stats", name="Stats", cron="30 8 * * *", prompt="count the files"))
     SpendLedger(tmp_path).record("chat", "seed", 1)
     # An empty script raises if anything invokes the model, so a pass proves the brake held.
-    monkeypatch.setattr(loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([])))
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([])))
 
     outcome = run_routine(routine, settings, store, pending)
 
@@ -244,11 +244,11 @@ def test_run_after_a_refusal_goes_through_and_records_spend(tmp_path, monkeypatc
     store, pending = make_stores(tmp_path)
     routine = store.add(Routine(id="daily_stats", name="Stats", cron="30 8 * * *", prompt="count the files"))
     SpendLedger(tmp_path).record("chat", "seed", 1)
-    monkeypatch.setattr(loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([])))
+    monkeypatch.setattr(loom.core.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([])))
     assert run_routine(routine, settings, store, pending).outcome == "refused"
 
     monkeypatch.setattr(
-        loom.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="10 files total")]))
+        loom.core.runtime, "make_model", lambda s: ScriptedChatModel(messages=iter([AIMessage(content="10 files total")]))
     )
     outcome = run_routine(routine, make_settings(tmp_path, daily_budget_tokens=1000), store, pending)
 

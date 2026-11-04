@@ -14,8 +14,8 @@ from conftest import (
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
-from loom.config import Settings
-from loom.graph import build_graph
+from loom.core.config import Settings
+from loom.core.graph import build_graph
 
 DRAFT_BODY = "Approval shows the whole draft text, not a truncation. " * 6
 
