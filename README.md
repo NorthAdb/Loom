@@ -190,6 +190,18 @@ What's on tomorrow?          /  总结明天日程
 Draft a mail to peer@x about the plan  /  给 peer@x 写一封关于计划的邮件草稿
 ```
 
+### Inbound, Request Scope, Gateway and Console (Gate 7)
+
+Untrusted inbound (simulated mail until Gate 8) is accepted by a seam that creates a triage task and issues the minimal Request Scope: an authenticated owner message gets a draft-only scope (`memory_write` false, approval required); an unauthenticated one gets no scope at all, so the gateway refuses every tool call for it. The Tool Gateway checks every tool call outside the model, before it runs, against that scope and fails closed - including when the audit write itself fails. A scope cannot be minted or widened by the model (`issue_scope` is control-plane only; `send_permission` is always false and a scope constructed with it true raises). The local draft path writes a `local_only` record and nothing else: no send tool, no send route, no SMTP. Every Gate 7 audit row threads the scope's `correlation_id`; `loom console` serves the four-view skin (Inbox / Draft / Approval / Audit) on 127.0.0.1 only, with a session, per-session CSRF tokens, and Origin/Host checks - an approval needs the session, not a hidden button.
+
+不可信入站在 Gate 7 用模拟邮件（fixtures/inbound/）。入站 seam 只做三件事：收件入箱、建任务、发行最小 Scope——已认证的主人邮件拿到「仅本地草稿」权限（memory_write=false、必须审批），未认证的什么都不拿，网关对它的每次工具调用都拒绝。Tool Gateway 在模型外、执行前校验每次工具调用，fail closed（连审计写失败也拒绝执行）。模型不能自授或扩权：`issue_scope` 只在控制面，`send_permission` 恒为 false。本地草稿只写一条 `local_only` 记录，没有发送工具、没有发送路由、没有 SMTP。Gate 7 起审计新行带 `correlation_id` 串起整条链。`loom console` 只监听 127.0.0.1，四视图（Inbox / Draft / Approval / Audit），session + CSRF + Origin/Host 校验，审批必须有 session。安装控制台依赖：`pip install -e ".[console]"`。
+
+A keyless demo of the closed loop (accept -> scoped triage -> approval -> one local draft, plus the four refusals):
+
+```bash
+python scripts/demo_gate7_inbound.py
+```
+
 ### Sandbox
 
 File tools work only inside the sandbox jail. Two transports, one rule set:
@@ -278,6 +290,7 @@ loom approvals list              # resolve anything the gate held while you were
 loom memory facts                # what Loom firmly knows; `set`/`del` to author it
 loom memory digest|episodic|feedback|compact   # the working set: fold recent activity into the digest
 loom tasks list|show|recover     # the task state machine; recover after a restart
+loom console                     # the local operator console on 127.0.0.1 (needs the console extra)
 loom stats                       # budget, token spend, approval and failure counters
 loom eval                        # regression confidence: cases must stay green, the canary must stay red
 ```
@@ -300,6 +313,7 @@ python scripts/demo_gate4_browser.py        # browser fill behind the human gate
 python scripts/demo_gate5.py                # budget brake, backup/restore, eval summary
 ```
 python scripts/demo_gate6_tasks.py          # task state machine and the Context OS (Gate 6)
+python scripts/demo_gate7_inbound.py        # simulated inbound loop: scope, gateway, local draft (Gate 7)
 ```
 
 ### Backup and restore
