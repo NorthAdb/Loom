@@ -5,6 +5,9 @@
 services:
   loom-sandbox:
     build: .
+    # The server defaults to 127.0.0.1; the container must bind every
+    # interface for the published 127.0.0.1:8765 port to reach it.
+    command: ["--host", "0.0.0.0"]
     ports:
       - "127.0.0.1:8765:8765"
     volumes:

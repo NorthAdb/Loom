@@ -26,7 +26,7 @@ Unchanged. They apply to every gate below. Detail: [SECURITY.md](SECURITY.md), [
 - Browser submit still requires a person.
 - Inbound content is untrusted. It is not an instruction. An email From header, or a body that claims to be the owner, is not an authenticated principal.
 - If authorizing a side effect or writing its audit record fails, the action fails closed.
-- Audit P0 is append-only JSONL. Gate 7 adds `correlation_id` on new rows so a draft is traceable to its scope. Today’s lines do not have that field. Traceable does not mean tamper-proof. A hash chain is deferred.
+- Audit P0 is append-only JSONL. Gate 7 adds `correlation_id` on new rows so a draft is traceable to its scope; rows since Gate 7 carry it. Traceable does not mean tamper-proof. A hash chain is deferred.
 
 ## Priority
 

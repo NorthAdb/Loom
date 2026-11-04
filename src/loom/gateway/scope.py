@@ -14,7 +14,7 @@ the owner.
 import json
 import threading
 import uuid
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -71,10 +71,6 @@ class RequestScope:
         data = dict(payload)
         data["allowed_actions"] = frozenset(data["allowed_actions"])
         return cls(**data)
-
-    def with_expiry(self, expires_at: str) -> "RequestScope":
-        """The same scope with a new expiry; widening the action set is not possible."""
-        return replace(self, expires_at=expires_at)
 
 
 def issue_scope(

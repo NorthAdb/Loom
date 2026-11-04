@@ -21,9 +21,9 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
-from loom.browser import BrowserField, PageState, PlaywrightBrowserTransport
-from loom.config import Settings, get_settings
-from loom.graph import build_graph
+from loom.core.config import Settings, get_settings
+from loom.core.graph import build_graph
+from loom.tools.browser import BrowserField, PageState, PlaywrightBrowserTransport
 
 _FILL = {
     "name": "Ada Lovelace",

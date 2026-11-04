@@ -30,11 +30,18 @@ class GatewayDecision:
 
 
 class ToolGateway:
-    """Checks a proposed tool call against the scope named in the graph state."""
+    """Checks a proposed tool call against the scope named in the graph state.
 
-    def __init__(self, audit: AuditLog, scopes: ScopeStore) -> None:
+    `allow_unscoped` is the production posture (open_graph builds it True):
+    a run with no scope_id is the operator's own chat or routine and keeps
+    the Gate 1-5 human gate without scope checks. Any run that carries a
+    scope_id is always fully checked.
+    """
+
+    def __init__(self, audit: AuditLog, scopes: ScopeStore, *, allow_unscoped: bool = False) -> None:
         self._audit = audit
         self._scopes = scopes
+        self._allow_unscoped = allow_unscoped
 
     def check(self, scope_id: str | None, tool_name: str, *, side_effect: bool, run_id: str) -> GatewayDecision:
         """Authorize one proposed call, or refuse with the reason audited.
@@ -47,14 +54,25 @@ class ToolGateway:
         scope: RequestScope | None = None
         try:
             if scope_id is None:
+                if self._allow_unscoped:
+                    return GatewayDecision(
+                        allowed=True,
+                        reason="unscoped run; the human gate is the boundary",
+                        scope=None,
+                        needs_approval=side_effect,
+                    )
                 return self._refuse(None, tool_name, run_id, side_effect, "no scope is attached to this run")
             try:
                 scope = self._scopes.get(scope_id)
             except KeyError:
                 return self._refuse(None, tool_name, run_id, side_effect, f"no such scope: {scope_id!r}")
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, TypeError) as exc:
                 return self._refuse(None, tool_name, run_id, side_effect, f"scope store unavailable: {exc}")
-            if scope.is_expired():
+            try:
+                expired = scope.is_expired()
+            except ValueError as exc:
+                return self._refuse(scope, tool_name, run_id, side_effect, f"scope has an unreadable expiry: {exc}")
+            if expired:
                 return self._refuse(scope, tool_name, run_id, side_effect, f"scope {scope_id} expired at {scope.expires_at}")
             if not scope.allows(tool_name):
                 return self._refuse(
@@ -77,7 +95,7 @@ class ToolGateway:
                 decision="authorized",
                 correlation_id=scope.correlation_id,
             )
-        except OSError as exc:
+        except (OSError, ValueError, TypeError) as exc:
             logger.warning("gateway could not write the authorization row; refusing", extra={"error": str(exc)})
             return GatewayDecision(allowed=False, reason=f"audit unavailable, failing closed: {exc}", scope=scope)
         return GatewayDecision(allowed=True, reason="authorized", scope=scope, needs_approval=needs_approval)

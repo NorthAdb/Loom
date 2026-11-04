@@ -17,16 +17,16 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 import loom.cli
-import loom.graph
-import loom.runtime
-from loom.config import Settings
-from loom.graph import build_graph
+import loom.core.graph
+import loom.core.runtime
+from loom.core.config import Settings
+from loom.core.graph import build_graph
+from loom.core.runner import run_routine
+from loom.gateway.pending import PendingStore
 from loom.memory import NullSemanticMemory
-from loom.pending import PendingStore
-from loom.routines import Routine, RoutineStore
-from loom.runner import run_routine
+from loom.ops.routines import Routine, RoutineStore
 
-loom.graph.build_semantic_memory = lambda settings: NullSemanticMemory()
+loom.core.graph.build_semantic_memory = lambda settings: NullSemanticMemory()
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "sandbox_messy"
 
@@ -124,7 +124,7 @@ def scenario_tidy(settings: Settings, store: RoutineStore) -> str:
     assert loom.cli.main(["approvals", "list"]) == 0
 
     # The resumed run opens a fresh graph, so the patch must return the same tidy_model instance.
-    loom.runtime.make_model = lambda settings: tidy_model
+    loom.core.runtime.make_model = lambda settings: tidy_model
     approved = loom.cli.main(["approvals", "approve", pending_id]) == 0
     print(f"approve exit ok: {approved}")
 

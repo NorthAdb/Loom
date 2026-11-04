@@ -31,9 +31,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
-from loom.config import Settings
 
 from loom.audit.log import AuditLog
+from loom.core.config import Settings
 from loom.core.graph import build_graph
 from loom.gateway import ScopeStore, issue_scope
 from loom.gateway.tool_gateway import ToolGateway

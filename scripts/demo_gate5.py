@@ -17,14 +17,14 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 from loom import eval as loom_eval
-from loom.audit import AuditLog
-from loom.backup import BACKUP_ROOTS, create_backup, restore_backup
-from loom.budget import BudgetGuard, SpendLedger
+from loom.audit.log import AuditLog
 from loom.cli import chat_session
-from loom.config import Settings
-from loom.graph import build_graph
+from loom.core.config import Settings
+from loom.core.graph import build_graph
 from loom.memory import FactsStore
-from loom.routines import Routine, RoutineStore
+from loom.ops.backup import BACKUP_ROOTS, create_backup, restore_backup
+from loom.ops.budget import BudgetGuard, SpendLedger
+from loom.ops.routines import Routine, RoutineStore
 
 BUDGET_REJECTED_REASON = "daily budget exceeded"
 

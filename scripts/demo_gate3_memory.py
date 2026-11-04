@@ -2,7 +2,7 @@
 
 Run with `.venv/Scripts/python scripts/demo_gate3_memory.py`. A fake semantic
 store rides the same seams the real Mem0 adapter uses (build_graph's `memory`
-parameter for the graph, `loom.cli.build_semantic_memory` for the CLI), and a
+parameter for the graph, `loom.cli.main.build_semantic_memory` for the CLI), and a
 scripted model drives the same LangGraph loop chat uses. The facts table is the
 real sqlite `FactsStore` reached through the real `loom memory` CLI commands.
 """
@@ -18,8 +18,8 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 
 import loom.cli
-from loom.config import Settings, get_settings
-from loom.graph import build_graph
+from loom.core.config import Settings, get_settings
+from loom.core.graph import build_graph
 
 
 class ScriptedChatModel(GenericFakeChatModel):
@@ -104,12 +104,15 @@ def scenario_explicit_message_is_memorized_and_searchable(data_dir: Path, store:
     if "记住 我喜欢简洁回复" not in store:
         return f"FAIL (store={list(store)})"
 
-    original = loom.cli.build_semantic_memory
-    loom.cli.build_semantic_memory = lambda settings: FakeSemantic(store)
+    import importlib
+
+    cli_main = importlib.import_module("loom.cli.main")
+    original = cli_main.build_semantic_memory
+    cli_main.build_semantic_memory = lambda settings: FakeSemantic(store)
     try:
         code, out = cli(["memory", "search", "回复偏好"])
     finally:
-        loom.cli.build_semantic_memory = original
+        cli_main.build_semantic_memory = original
     print(f"  loom memory search 回复偏好 -> exit {code}: {out.strip()}")
     if code == 0 and "我喜欢简洁回复" in out:
         return "PASS"
