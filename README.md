@@ -4,13 +4,17 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, the Phase 5 calendar + email drafts, and the Phase 6 browser fill are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, browser fill over headless Playwright chromium where open and fill prepare a page unapproved and submit waits for a human, tests). See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+**Current:** Gate 1–5 are done on main tip `1711d1b`. Next is Gate 6 (Context OS, including Task State). [docs/STATUS.md](docs/STATUS.md) · [docs/ROADMAP.md](docs/ROADMAP.md).
+
+当前：Gate 1–5 已完成（main `1711d1b`），下一关是 Gate 6。进度见 [docs/STATUS.md](docs/STATUS.md)，计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
+**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, the Phase 5 calendar + email drafts, the Phase 6 browser fill, and the Phase 7 budget, backup, eval, and CI are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, browser fill over headless Playwright chromium where open and fill prepare a page unapproved and submit waits for a human, tests). See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Loom is
 
-Loom is a deep-and-wide personal agent the owner can run every day on one machine. Early work is the loop that makes that plausible: a local file sandbox, scheduled routines, and a human approval gate. Calendar summaries, email drafts, and browser fill come after that loop exists.
+Loom is a personal agent the owner runs every day on one machine. Gate 1–5 is that loop in the tree: a local file sandbox, scheduled routines, a human approval gate, a memory baseline, calendar summaries, email drafts, and browser fill. The next bet is one Life Operator — untrusted inbound in, a gated life action out — and it starts at Gate 6. It is not built yet.
 
-Product boundaries and the 2026-10-30 decisions live in [docs/VISION.md](docs/VISION.md) and [docs/DECISIONS.md](docs/DECISIONS.md).
+Product boundaries and the locked decisions (2026-10-30, extended 2026-11-04) live in [docs/VISION.md](docs/VISION.md) and [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## Non-goals
 
@@ -20,11 +24,15 @@ Product boundaries and the 2026-10-30 decisions live in [docs/VISION.md](docs/VI
 - Sending email (drafts only)
 - Creating, editing, or deleting calendar events (read-only summaries)
 - Browser actions that change remote state without a human confirm
-- Secrets in model context, prompts, or git
+- Secrets in model context, prompts, git, the audit log, or backups
+- Treating inbound content as instructions, or an email From header as the owner
+- A thick RAG store as the memory spine
 
 ## Architecture
 
-The LangGraph loop, the sandbox layer, and the memory layer are built; MCP is not. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
+The LangGraph loop, the sandbox layer, and the memory baseline are built; MCP, Request Scope, and the Operator Console are not. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
+
+Built through Gate 5:
 
 ```text
 person / scheduler
@@ -48,7 +56,7 @@ Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the 
 | Language | Python | Engineering shell, core loop |
 | Orchestration | LangGraph | Core loop with approval gate |
 | Optional later | Pi as exec / sub-agent | Absent |
-| Memory | Mem0 + self-owned facts/preferences; agentic memory later | Facts table + self-hosted Mem0 baseline |
+| Memory | Facts table plus optional Mem0; light Context OS and Task State are Gate 6 | Facts table + self-hosted Mem0 baseline. Digest and Task State are not built |
 | Browser | Playwright (headless chromium) behind the `browser` extra | Browser fill with an allowlisted transport and a human-gated submit |
 | Runtime | Local / single-host Docker | Sandbox service (compose) |
 | CI | GitHub Actions | ruff + pytest on 3.11/3.12, advisory pip-audit |
@@ -307,14 +315,15 @@ loom memory facts                                          # 3. the facts are ba
 
 ## Docs
 
+- [docs/README.md](docs/README.md) — which file owns progress, the plan, and decisions
 - [docs/VISION.md](docs/VISION.md) — vision and boundaries
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target layers
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target layers, with Gate 6+ marked unbuilt
 - [docs/DECISIONS.md](docs/DECISIONS.md) — locked choices
 - [docs/RESUME_STORY.md](docs/RESUME_STORY.md) — what this repository demonstrates, with reproducible numbers
-- [docs/ROADMAP.md](docs/ROADMAP.md) — P0–P3
+- [docs/ROADMAP.md](docs/ROADMAP.md) — Gate 6+ plan (Gate 1–5 are done)
 - [docs/STATUS.md](docs/STATUS.md) — what the repository actually contains
 - [docs/SECURITY.md](docs/SECURITY.md) — secrets, drafts, approval
-- [CONTRIBUTING.md](CONTRIBUTING.md) — status updates are part of shipping
+- [CONTRIBUTING.md](CONTRIBUTING.md) — status updates are part of shipping; decisions live in the repo, not on an external page
 
 ## License
 

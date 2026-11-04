@@ -1,8 +1,22 @@
 # Status
 
-Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md).
+Source of truth for what this repository contains. Update this file in the same change that moves an item. Rules: [CONTRIBUTING.md](../CONTRIBUTING.md). Plan: [ROADMAP.md](ROADMAP.md). Decisions: [DECISIONS.md](DECISIONS.md).
 
-Last updated: 2026-11-03 (redirect-landing hardening after the Gate 4+5 review).
+Last updated: 2026-11-04.
+
+Gate 1–5 passed on main tip `1711d1b` (PR #19, the Gate 4 redirect-landing hardening). The acceptance suite is 321 passed and 1 skipped with chromium installed; the commands are in [RESUME_STORY.md](RESUME_STORY.md). **In progress** is empty. Gate 6 and later are not in this tree.
+
+## Gate map (Gate对照)
+
+Index of the acceptance gates. The rows name the phases; the detail stays in **Done** and is not repeated here.
+
+| Gate | Phases | Status | What landed |
+| --- | --- | --- | --- |
+| Gate 1 | Phase 0+1 | Passed | Installable package, config, redacted logs, `loom version` / `loom doctor`; LangGraph chat, tool registry, approval gate, JSONL audit, sqlite checkpoints |
+| Gate 2 | Phase 2+3 | Passed | File sandbox (path jail, read/write tools, approval) and the compose non-root service; routine store, runner, APScheduler worker, pending approvals |
+| Gate 3 | Phase 4+5 | Passed | Facts table plus optional Mem0; read-only ICS calendar; mail drafts via IMAP APPEND (no send) |
+| Gate 4 | Phase 6 | Passed | Playwright `browser_open` / `browser_fill` / `browser_submit`; request firewall and redirect-landing close. Tip `1711d1b` |
+| Gate 5 | Phase 7 | Passed | Daily token budget, `loom stats`, backup/restore, `loom eval`, GitHub Actions CI, [RESUME_STORY.md](RESUME_STORY.md) |
 
 ## Done
 
@@ -39,18 +53,54 @@ Last updated: 2026-11-03 (redirect-landing hardening after the Gate 4+5 review).
 
 ## Not started
 
-### P3 — Depth, then more scenarios
+Gate 6 and later only. None of these are started. Priority, order, and the hard boundaries: [ROADMAP.md](ROADMAP.md).
 
-- [ ] Agentic memory
-- [ ] Optional Pi exec / sub-agent
-- [ ] Further daily scenarios beyond the locked list
+### Gate 6 — Context OS, including Task State (P0)
 
-### Standing constraints (not features)
+Mem0 stays optional and is not part of this gate.
 
-These are decisions, not tasks to “finish.” They stay in force while the items above are built. See [DECISIONS.md](DECISIONS.md) and [SECURITY.md](SECURITY.md).
+- [ ] Digest, episodic log, feedback, and compact, on top of the facts table
+- [ ] Task State: a persistent state machine, restart recovery, and idempotent external side effects
 
-- Secrets stay out of model context and git
-- Email never sends
+### Gate 7 — Inbound, Request Scope, Operator Console (P0)
+
+- [ ] Untrusted inbound seam (simulated inbound is enough for this gate)
+- [ ] Request Scope as a real object, checked by a Tool Gateway outside the model
+- [ ] Operator Console shell: FastAPI + Jinja2 + HTMX; Inbox, Draft, Approval, and Audit; local bind, CSRF and Origin/Host checks, session
+- [ ] At least ten negative tests on simulated inbound, including a forged principal, a hidden instruction to write facts, and a demand to send
+
+### Gate 8 — Mail triage (P0)
+
+- [ ] Real mail triage on the console
+- [ ] Default write is a local draft; the Draft view has no send control
+- [ ] The Gate 3 mailbox IMAP draft stays a separate Scope plus approval, not part of the default triage
+
+### Gate 9 — MCP registry (P1)
+
+- [ ] Schema fingerprint, re-review on change, and per-server credential isolation
+- [ ] Tool return values treated as untrusted
+- [ ] A demo of two or three read-only servers and one refused over-privilege call
+
+### Gate 10 — Long-running tasks and a quiet policy (P2, deferred)
+
+No design beyond the name is locked. Not part of P0.
+
+- [ ] Long-running tasks and a quiet policy
+
+### Gate 11 — Specialist workers (P2, deferred)
+
+- [ ] Workers with no independent send, and only after one Life Operator is not enough
+
+## Standing constraints (not features)
+
+These are decisions, not tasks to “finish.” They stay in force for Gate 6 and later. See [DECISIONS.md](DECISIONS.md) and [SECURITY.md](SECURITY.md).
+
+- Secrets stay out of model context, git, the audit log, and backups
+- Email never sends (`send_permission` is false; no send tool; a future Draft view has no send control)
 - Calendar stays read-only
+- Browser submit requires a person
+- Inbound content is not an instruction and is not an authenticated principal
+- The audit log is append-only JSONL. It is traceable. It is not a tamper-proof proof
 - Coil is not forked, vendored, or used as the runtime
 - Nanobot is not the shell
+- An external research page is not this file

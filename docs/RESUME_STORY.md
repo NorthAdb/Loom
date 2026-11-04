@@ -27,7 +27,7 @@ The core is a LangGraph graph (`src/loom/graph.py`): memory note → agent → g
 - **Fill ungated, submit gated.** Typing into a form runs without approval because it submits nothing; the single click that submits is the only gated browser verb. The request firewall closes the gap a script could otherwise drive through.
 - **The budget is tokens, not dollars.** Dollars require inventing a per-model price; tokens come from the API's own usage metadata and brake exactly. An optional price key feeds a dollars estimate into `loom stats` only.
 - **Snapshots deferred.** The browser gate shows a url + field dictionary instead of a screenshot; screenshots are a later layer ([ADR-011](DECISIONS.md)).
-- **Two memory stores with one priority rule.** The self-owned facts table is authoritative; Mem0 recall is reference. Conflicts resolve toward the table by injection order, and secrets are refused at both write paths.
+- **Two memory stores with one priority rule.** The self-owned facts table is authoritative; Mem0 recall is reference. Conflicts resolve toward the table by injection order, and secrets are refused at both write paths. The next memory plan is light context plus Task State ([ADR-013](DECISIONS.md)). It is not built, and this page does not claim it.
 - **Approval resumes are not re-budgeted.** A resumed run belongs to a turn a person already admitted, and each resume still needs that person.
 
 ## Try it
@@ -42,3 +42,7 @@ loom eval
 ```
 
 The demos are keyless (scripted models, local fixtures); the full README walk is in [the README](../README.md).
+
+## Not in this tree
+
+Gate 6 and later — Context OS and Task State, Request Scope, the Operator Console, mail triage — are planned in [ROADMAP.md](ROADMAP.md) and locked in [DECISIONS.md](DECISIONS.md). This page does not claim them. Resume wording for that loop waits until the features are in the repository.
