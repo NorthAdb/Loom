@@ -24,6 +24,7 @@ from langgraph.types import Command
 from loom.audit.log import AuditLog
 from loom.core.config import Settings
 from loom.core.graph import build_graph
+from loom.gateway.scope import ScopeStore, issue_scope
 from loom.memory import FactsStore
 from loom.ops.budget import BudgetGuard, SpendLedger, turn_tokens
 from loom.tools.browser import (
@@ -46,6 +47,7 @@ _EXPECT_TYPES = {
     "mail_appended": int,
     "audit_budget_rejected": bool,
     "spend_recorded": bool,
+    "facts_count": int,
 }
 
 
@@ -58,6 +60,11 @@ class EvalCase:
     is the auto-decision when the graph interrupts; None means the case must
     not interrupt at all. `ics` may contain a "{today}" token, replaced with
     the run date in the settings timezone (a static file cannot name today).
+    `scope`, when present, models inbound: the harness issues a real Request
+    Scope (`allowed_actions`, `memory_write` default false, `authenticated`
+    default true) and invokes the graph with its id, so the gateway checks
+    every call exactly as a triage run's would be. With `authenticated` false
+    no scope is issued and the run is unscoped.
     """
 
     name: str
@@ -71,6 +78,7 @@ class EvalCase:
     browser_allowed_hosts: str = ""
     ics: str | None = None
     mail: bool = False
+    scope: dict | None = None
     expect: dict[str, Any] = field(default_factory=dict)
     expect_fail: bool = False
 
@@ -113,6 +121,8 @@ class EvalCase:
         ics = raw.get("ics")
         need(ics is None or isinstance(ics, str), "'ics' must be a string")
         need(isinstance(raw.get("mail", False), bool), "'mail' must be a boolean")
+        scope = raw.get("scope")
+        need(scope is None or _is_scope(scope), "'scope' must be {\"allowed_actions\": [str], \"memory_write\": bool, \"authenticated\": bool}")
         expect = raw.get("expect", {})
         need(isinstance(expect, dict), "'expect' must be an object")
         for key, value in expect.items():
@@ -131,6 +141,7 @@ class EvalCase:
             browser_allowed_hosts=raw.get("browser_allowed_hosts", ""),
             ics=ics,
             mail=raw.get("mail", False),
+            scope=scope,
             expect=expect,
             expect_fail=raw.get("expect_fail", False),
         )
@@ -265,6 +276,16 @@ class FakeBrowserTransport:
 
 def _is_step(step) -> bool:
     return isinstance(step, dict) and isinstance(step.get("tool"), str) and isinstance(step.get("args"), dict)
+
+
+def _is_scope(spec) -> bool:
+    return (
+        isinstance(spec, dict)
+        and isinstance(spec.get("allowed_actions", []), list)
+        and all(isinstance(action, str) for action in spec.get("allowed_actions", []))
+        and isinstance(spec.get("memory_write", False), bool)
+        and isinstance(spec.get("authenticated", True), bool)
+    )
 
 
 def _is_page(spec) -> bool:
@@ -407,6 +428,7 @@ def _judge(case: EvalCase, *, interrupted, unplanned_tools, refused, result, tra
         "mail_appended": len(getattr(transports.get("mail"), "appended", ())),
         "audit_budget_rejected": _has_budget_rejection(data_dir),
         "spend_recorded": _has_spend_for(data_dir, case.name),
+        "facts_count": len(FactsStore(data_dir).list()),
     }
     for key, expected in case.expect.items():
         actual = checks[key]
@@ -428,6 +450,21 @@ def _run_case(case: EvalCase, data_dir: Path, sandbox_root: Path) -> CaseResult:
         script.append(AIMessage(content=case.final))
         graph = build_graph(ScriptedChatModel(messages=iter(script)), settings, transports=transports)
 
+        scope_id = None
+        if case.scope is not None and case.scope.get("authenticated", True):
+            # The inbound posture: a real scope in the real store, so the
+            # gateway's checks are the production checks, not a test double.
+            scope = issue_scope(
+                "owner",
+                "eval",
+                "eval-resource",
+                case.scope.get("allowed_actions", []),
+                memory_write=case.scope.get("memory_write", False),
+                approval_required=True,
+            )
+            ScopeStore(data_dir).add(scope)
+            scope_id = scope.scope_id
+
         guard = _budget_guard(case, data_dir)
         interrupted = False
         unplanned_tools = ""
@@ -437,7 +474,9 @@ def _run_case(case: EvalCase, data_dir: Path, sandbox_root: Path) -> CaseResult:
             refused = True
         else:
             config = {"configurable": {"thread_id": case.name}}
-            result = graph.invoke({"messages": [HumanMessage(content=case.user)], "run_id": case.name}, config)
+            result = graph.invoke(
+                {"messages": [HumanMessage(content=case.user)], "run_id": case.name, "scope_id": scope_id}, config
+            )
             while "__interrupt__" in result:
                 if case.gate is None:
                     unplanned_tools = ", ".join(item["name"] for item in result["__interrupt__"][0].value["tools"])
