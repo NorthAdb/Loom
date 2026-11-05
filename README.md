@@ -232,6 +232,23 @@ python scripts/demo_gate8_mail_triage.py
 
 邮件分类（Gate 8）：真实邮件经只读 IMAP 拉取（复用 `LOOM_IMAP_*` / `LOOM_MAIL_*`，无新配置），默认只写本地草稿。Console 流程：Inbox 里 Fetch（只读 EXAMINE + BODY.PEEK，不改动服务器状态）为每封信建 triage 任务与「仅草稿」Scope → Triage（或 `loom triage <message_id>`）把信分类为 reply/action/reading/archive 并提议本地草稿，审批展示完整收件人/主题/正文，批准后只落 `drafts.json`。可选的「写入邮箱草稿」是第 4 层：单独 Scope、单独审批、同一网关与审计，同样绝不发送；第 3 层（标签/已读）默认关闭，第 5 层（发送）不存在。试运行：`python scripts/demo_gate8_mail_triage.py`（无需 key 与网络）。
 
+### MCP servers (Gate 9)
+
+MCP servers join the same lifecycle as every other capability. What registers:
+
+1. `loom mcp register --id notes --name "Canned notes" --command '["python", "notes_server.py"]' --allow notes_search,notes_count` probes the stdio server once (initialize + tools/list), validates every `--allow` name against the live listing (a typo refuses, naming what the server actually offers), and stores a record in `<data dir>/mcp_servers.json`: the command, a **schema fingerprint** (sha256 over the canonical JSON of the tool list — key order and whitespace never matter, any reviewed byte does), the allowed subset, and the credential env-var NAME. `--force` overwrites an existing registration and freezes it; `loom mcp list`, `loom mcp revoke <id>`, and `loom mcp review <id>` round the lifecycle out.
+2. A schema change freezes: every call re-reads the record and re-verifies the fingerprint live, so a server that adds, removes, or rewords a tool is refused on its next call and stays frozen until a human runs `loom mcp review`.
+3. Calls are actions, not free turns: every call carries the name `mcp:<server_id>:<tool>`, runs `side_effect=True` through the Tool Gateway, needs the name in the Request Scope's `allowed_actions`, and is audited. A tool outside the registered subset has no spec at all — the model cannot reach it.
+4. Credentials are handles: the registry stores the env-var NAME (`--credential-env LOOM_NOTES_TOKEN`), the client maps that name to its current value in the child process, and the value never enters the model, git, the audit body, or a backup. Tool return values are untrusted data: they reach the model as text and write nothing — no facts, no scope widening, no send.
+
+MCP is off by default; an entrypoint enables it deliberately. A no-key demo (two read-only fixture servers, one deliberate over-privilege denial, one fingerprint-tamper freeze, and the review that un-freezes):
+
+```bash
+python scripts/demo_gate9_mcp.py
+```
+
+MCP 服务器（Gate 9）：`loom mcp register` 探测一次 stdio 服务器，记录 schema 指纹（工具列表的规范化 JSON 之 sha256）与允许的工具子集；schema 变更或 `--force` 重注册都会冻结服务器，直到 `loom mcp review` 人工复审。每次调用都是 `mcp:<server_id>:<tool>` 动作，走 Tool Gateway、需 Scope 授权、进审计；凭据只存环境变量名（值永不入库、进 git、进审计、进备份）；工具返回值是不可信数据——不写 facts、不扩权、无 send。MCP 默认关闭，由入口显式开启。试运行：`python scripts/demo_gate9_mcp.py`。
+
 ### Sandbox
 
 File tools work only inside the sandbox jail. Two transports, one rule set:
@@ -334,7 +351,7 @@ Set a spending brake in `.env` before going hands-off: `LOOM_DAILY_BUDGET_TOKENS
 
 ### Demos
 
-Ten keyless demos (scripted models, local fixtures) each prove one path end to end; the browser one additionally needs chromium:
+Eleven keyless demos (scripted models, local fixtures) each prove one path end to end; the browser one additionally needs chromium:
 
 ```bash
 python scripts/demo_gate1.py                # core loop: harmless tools answer, side effects gate
@@ -347,11 +364,12 @@ python scripts/demo_gate5.py                # budget brake, backup/restore, eval
 python scripts/demo_gate6_tasks.py          # task state machine and the Context OS (Gate 6)
 python scripts/demo_gate7_inbound.py        # simulated inbound loop: scope, gateway, local draft (Gate 7)
 python scripts/demo_gate8_mail_triage.py    # real-shaped mail: fetch, scoped triage, local draft, layer 4 (Gate 8)
+python scripts/demo_gate9_mcp.py            # MCP under the same gates: fingerprint, freeze, review (Gate 9)
 ```
 
 ### Backup and restore
 
-`loom backup [destination]` zips the nine data-dir roots — `facts.db`, `routines.json`, `tasks.db`, `context.db`, `drafts.json`, `approvals/`, `audit/`, `checkpoints/`, `inbound/` — into `loom-backup-<timestamp>.zip` (destination defaults to `./backups`). Nothing else is included: `.env`, spend ledgers, the semantic-memory store, and `scopes.json` (a restore revokes authorizations instead of silently re-granting them, ADR-019) never enter an archive, so a backup cannot become a secrets exfiltration path. Run it while Loom is idle; `facts.db` is captured as the file stands.
+`loom backup [destination]` zips the nine data-dir roots — `facts.db`, `routines.json`, `tasks.db`, `context.db`, `drafts.json`, `approvals/`, `audit/`, `checkpoints/`, `inbound/` — into `loom-backup-<timestamp>.zip` (destination defaults to `./backups`). Nothing else is included: `.env`, spend ledgers, the semantic-memory store, `mcp_servers.json`, and `scopes.json` (a restore revokes authorizations instead of silently re-granting them, ADR-019) never enter an archive, so a backup cannot become a secrets exfiltration path. Run it while Loom is idle; `facts.db` is captured as the file stands.
 
 `loom restore <archive> [--force]` writes the archive's members back into the data dir. It refuses when a target file already exists unless you pass `--force`, and it refuses any archive member that would land outside the data dir. The drill:
 

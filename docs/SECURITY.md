@@ -32,6 +32,12 @@ Gate 8 layering is not built. When it is, the default triage write is a local dr
 
 Calendar access is a read-only summary. Implemented (Phase 5, reworked): `calendar_list_events` and `calendar_summarize_range` (both `side_effect=false`) GET an ICS feed over **https only** (plain http is accepted only for loopback hosts, which tests and demos serve; redirects that leave https are refused; the response body is capped at 1 MiB) and render events in the configured timezone. Every transport failure becomes one `RuntimeError` built from a URL redacted to scheme and host — the feed URL's private token in its path or query is never sent over plain http nor echoed in an error, and the original exception is never chained. Neither the transports nor `parse_events` can create, update, or delete an event, and the same gate test fails if a write symbol appears in `src/loom`. A write API is out of scope until a new ADR says otherwise. No such ADR exists.
 
+## MCP servers
+
+MCP servers join the same gates. Implemented (Gate 9, ADR-020): `loom mcp register` probes the stdio server once and records a schema fingerprint (sha256 over the canonical JSON of the tool list — key order and whitespace never matter, any reviewed byte does) plus an explicit allowed tool subset in `<data dir>/mcp_servers.json`; a forced re-registration freezes the record until `loom mcp review` re-probes it. Every call carries the action name `mcp:<server_id>:<tool>`, runs `side_effect=True` through the Tool Gateway, and is re-verified inside the bridge at call time — unregistered server, out-of-subset tool, frozen server, or drifted fingerprint refuses with an audited rejection. The client is an in-house JSON-RPC 2.0-over-stdio implementation with a 1 MiB response cap and no SDK; server stderr is drained and discarded because it can carry secrets and never enters exceptions or logs.
+
+Credentials are env-var handles: the registry stores the variable NAME only, the client maps that name to its current value in the child's environment, and the value never enters the model, git, the audit body, or a backup (`mcp_servers.json` is pinned out of `BACKUP_ROOTS`). Tool return values are untrusted data — they reach the model as text and write nothing: no facts, no scope widening, `send_permission` untouched. MCP is off by default; an entrypoint enables it deliberately (`open_graph(mcp=True)` or an explicit `extra_registry`).
+
 ## Side effects and the approval gate
 
 A human approves side effects before they happen. Side effects include:
