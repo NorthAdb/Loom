@@ -1,10 +1,11 @@
 import json
 
+import pytest
 from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 
 import loom.core.runtime
-from loom.core.config import Settings
+from loom.core.config import ConfigError, Settings
 from loom.core.runner import resume_pending, run_routine
 from loom.gateway.pending import PendingStore
 from loom.ops.budget import SpendLedger
@@ -257,3 +258,52 @@ def test_run_after_a_refusal_goes_through_and_records_spend(tmp_path, monkeypatc
     ledger = SpendLedger(tmp_path)
     assert ledger.runs_total() == {"chat": 1, "routine": 1}
     assert ledger.today_tokens() > 1  # the seed spend plus the routine's own estimate
+
+
+def test_reject_resume_needs_no_llm_key(monkeypatch, tmp_path):
+    """A human refusal must never depend on model availability (dogfood finding)."""
+    settings = make_settings(tmp_path)
+    routine, store, pending = add_write_routine(tmp_path)
+    monkeypatch.setattr(
+        loom.core.runtime,
+        "make_model",
+        lambda s: ScriptedChatModel(
+            messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"})])
+        ),
+    )
+    outcome = run_routine(routine, settings, store, pending)
+    assert outcome.outcome == "pending"
+
+    def forbidden(settings):
+        raise AssertionError("a reject must not build a chat model")
+
+    monkeypatch.setattr(loom.core.runtime, "make_model", forbidden)
+    answer = resume_pending(outcome.pending_id, "reject", settings, pending).answer
+
+    assert "rejected" in answer
+    assert not (tmp_path / "sandbox" / "todo.md").exists()
+    decisions = [(record["tool"], record["decision"]) for record in read_audit(tmp_path)]
+    assert ("write_file", "rejected") in decisions
+    assert pending.get(outcome.pending_id).status == "completed"
+
+
+def test_approve_resume_still_requires_a_model(monkeypatch, tmp_path):
+    """An approve continues the run into the model, so the key requirement stands."""
+    settings = make_settings(tmp_path)
+    routine, store, pending = add_write_routine(tmp_path)
+    monkeypatch.setattr(
+        loom.core.runtime,
+        "make_model",
+        lambda s: ScriptedChatModel(
+            messages=iter([tool_call_msg("write_file", {"path": "todo.md", "content": "hi"})])
+        ),
+    )
+    outcome = run_routine(routine, settings, store, pending)
+    assert outcome.outcome == "pending"
+
+    def no_key(settings):
+        raise ConfigError("LLM_API_KEY is empty; set it in .env or the environment to chat")
+
+    monkeypatch.setattr(loom.core.runtime, "make_model", no_key)
+    with pytest.raises(ConfigError):
+        resume_pending(outcome.pending_id, "approve", settings, pending)

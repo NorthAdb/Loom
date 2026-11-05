@@ -164,3 +164,36 @@ def test_triage_of_an_unknown_message_is_a_valueerror(tmp_path):
 
     with pytest.raises(ValueError, match="no such inbox message"):
         run_triage("nope", settings, PendingStore(tmp_path), graph=None)
+
+
+def test_triage_refreshes_an_expired_or_missing_accept_scope(tmp_path):
+    """A stale scope must not deadlock the message: the operator's triage click re-mints (control plane)."""
+    settings, graph, seams = _setup(
+        tmp_path,
+        [
+            tool_call_msg(
+                "draft_create_local",
+                {"to": "landlord@example.com", "subject": "Heating bill", "body": "We agree and will pay by the 15th.", "category": "reply"},
+                "c1",
+            ),
+            AIMessage(content="Draft stored for your review."),
+        ],
+    )
+    _task, scope = _accept(seams, "sim-001")
+    pending = PendingStore(tmp_path)
+    stale_scope_id = scope.scope_id
+
+    path = tmp_path / "scopes.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored[0]["expires_at"] = "2020-01-01T00:00:00+08:00"
+    path.write_text(json.dumps(stored), encoding="utf-8")
+
+    outcome = run_triage("sim-001", settings, pending, graph=graph)
+
+    assert outcome.outcome == "pending"
+    record = pending.list_pending()[0]
+    assert record.scope_id != stale_scope_id  # a fresh scope carried the run
+    rows = read_audit(tmp_path)
+    rescope = next(row for row in rows if row["tool"] == "inbound.rescope")
+    assert rescope["decision"] == "issued"
+    assert rescope["correlation_id"] == ScopeStore(tmp_path).get(record.scope_id).correlation_id

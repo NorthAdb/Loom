@@ -20,6 +20,26 @@ _OWNER_ACTIONS = frozenset({"draft_create_local"})
 _TRIAGE_ACTIONS = frozenset()
 
 
+def refresh_triage_scope(message: InboundMessage, scopes: ScopeStore) -> RequestScope:
+    """Mint one fresh triage scope for a message whose accept-time scope is gone or expired.
+
+    The control plane's mint, on an explicit operator action (a triage click
+    or the `loom triage` command): the same minimal draft-only actions, the
+    same memory_write=false and approval-required posture. The model has no
+    path to this function.
+    """
+    scope = issue_scope(
+        "owner",
+        message.channel,
+        f"inbound/{message.channel}/{message.message_id}",
+        _OWNER_ACTIONS,
+        memory_write=False,
+        approval_required=True,
+    )
+    scopes.add(scope)
+    return scope
+
+
 def accept_inbound(
     message: InboundMessage,
     *,
@@ -38,15 +58,7 @@ def accept_inbound(
     task = tasks.create("inbound_triage", f"inbound {message.channel} {message.message_id}")
     scope: RequestScope | None = None
     if message.authenticated:
-        scope = issue_scope(
-            "owner",
-            message.channel,
-            f"inbound/{message.channel}/{message.message_id}",
-            _OWNER_ACTIONS,
-            memory_write=False,
-            approval_required=True,
-        )
-        scopes.add(scope)
+        scope = refresh_triage_scope(message, scopes)
     tasks.transition(task.task_id, TaskStatus.RUNNING)
     task = tasks.get(task.task_id)
     inbox.add(message, task_id=task.task_id, scope_id=scope.scope_id if scope else None)

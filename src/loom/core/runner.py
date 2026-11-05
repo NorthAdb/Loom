@@ -25,7 +25,7 @@ from loom.core.runtime import open_graph
 from loom.gateway.mailbox_draft import MAILBOX_DRAFT_ROUTINE, resolve_mailbox_draft
 from loom.gateway.pending import COMPLETED, PENDING, PendingApproval, PendingStore
 from loom.gateway.scope import ScopeStore
-from loom.inbound.accept import compose_triage_prompt
+from loom.inbound.accept import compose_triage_prompt, refresh_triage_scope
 from loom.inbound.store import InboxStore
 from loom.ops.budget import guard_from_settings, turn_tokens
 from loom.ops.routines import Routine, RoutineStore, now_local
@@ -164,7 +164,10 @@ def resume_pending(pending_id: str, decision: str, settings: Settings, pending: 
         return RunOutcome(COMPLETED, record.thread_id, answer=result["messages"][-1].content)
 
     if graph is None:
-        with open_graph(settings) as opened:
+        # A reject never reaches the model (gate -> aborted -> END), so it must
+        # work with no LLM key configured; an approve genuinely continues the
+        # run and keeps requiring one.
+        with open_graph(settings, allow_missing_llm=(decision == "reject")) as opened:
             return drive(opened)
     return drive(graph)
 
@@ -200,12 +203,22 @@ def run_triage(message_id: str, settings: Settings, pending: PendingStore, *, gr
     run_id = uuid.uuid4().hex
     set_run_id(run_id)
     thread_id = f"triage:{record.task_id}"
-    correlation_id = None
+    scopes = ScopeStore(settings.loom_data_dir)
+    scope = None
     if record.scope_id:
         try:
-            correlation_id = ScopeStore(settings.loom_data_dir).get(record.scope_id).correlation_id
+            scope = scopes.get(record.scope_id)
         except KeyError:
-            correlation_id = None  # scopes are excluded from backups; a dangling id is the gateway's refusal
+            scope = None  # scopes are excluded from backups; a dangling id re-authorizes below
+    rescoped = False
+    if record.scope_id and (scope is None or scope.is_expired()):
+        # The operator's explicit triage click is the control plane: the mint
+        # stays here, never in the model. Without this, a message whose
+        # accept-time scope expired could never be triaged at all (the inbox
+        # dedupe keeps its id, so no new scope would ever be issued).
+        scope = refresh_triage_scope(record.message, scopes)
+        rescoped = True
+    correlation_id = scope.correlation_id if scope else None
     audit.append(
         run_id=run_id,
         actor="console",
@@ -214,6 +227,15 @@ def run_triage(message_id: str, settings: Settings, pending: PendingStore, *, gr
         decision="triggered",
         correlation_id=correlation_id,
     )
+    if rescoped:
+        audit.append(
+            run_id=run_id,
+            actor="console",
+            tool="inbound.rescope",
+            args={"message_id": message_id, "reason": "the accept-time scope expired or is missing"},
+            decision="issued",
+            correlation_id=correlation_id,
+        )
     if not record.scope_id:
         audit.append(
             run_id=run_id,
@@ -235,7 +257,7 @@ def run_triage(message_id: str, settings: Settings, pending: PendingStore, *, gr
             {
                 "messages": [HumanMessage(content=compose_triage_prompt(record.message))],
                 "run_id": run_id,
-                "scope_id": record.scope_id or "",
+                "scope_id": scope.scope_id if scope else "",
             },
             config,
         )
@@ -251,7 +273,7 @@ def run_triage(message_id: str, settings: Settings, pending: PendingStore, *, gr
                 reason=payload["reason"],
                 created_at=now_local(),
                 status=PENDING,
-                scope_id=record.scope_id or "",
+                scope_id=scope.scope_id if scope else "",
                 task_id=record.task_id,
             )
             pending.add(triage_pending)
