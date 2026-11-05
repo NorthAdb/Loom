@@ -215,8 +215,12 @@ def run_triage(message_id: str, settings: Settings, pending: PendingStore, *, gr
         # The operator's explicit triage click is the control plane: the mint
         # stays here, never in the model. Without this, a message whose
         # accept-time scope expired could never be triaged at all (the inbox
-        # dedupe keeps its id, so no new scope would ever be issued).
-        scope = refresh_triage_scope(record.message, scopes)
+        # dedupe keeps its id, so no new scope would ever be issued). The
+        # replacement reuses the accept-time correlation_id, so the message's
+        # chain reads accept -> scope -> triage on one id.
+        scope = refresh_triage_scope(
+            record.message, scopes, correlation_id=scope.correlation_id if scope else None
+        )
         rescoped = True
     correlation_id = scope.correlation_id if scope else None
     audit.append(

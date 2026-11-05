@@ -109,7 +109,25 @@ def resolve_mailbox_draft(
     tool_args = record.tools[0]["args"] if record.tools else {}
     draft_id = record.thread_id.removeprefix("mailbox:")
     if not verdict.allowed:
-        return f"refused: {verdict.reason}"
+        # A vetoed resolution still ends the request: the pending queue must
+        # not hold a record no decision can clear, the refusal lands in the
+        # audit with the scope's correlation when one exists, and the IMAP
+        # transport is never touched. When even the refusal row cannot be
+        # written, the record stays pending — nothing moves without its
+        # authorization row, and the operator can retry once the audit works.
+        try:
+            audit.append(
+                run_id=pending_id,
+                actor="human",
+                tool="mail_create_draft",
+                args={"draft_id": draft_id, "requested": decision, "reason": verdict.reason},
+                decision="rejected",
+                correlation_id=correlation_id,
+            )
+        except (OSError, ValueError, TypeError):
+            return f"refused: {verdict.reason}; the refusal could not be audited, so the request stays open"
+        pending.set_status(pending_id, COMPLETED)
+        return f"refused: {verdict.reason}; the request is closed"
     if decision == "reject":
         audit.append(
             run_id=pending_id,

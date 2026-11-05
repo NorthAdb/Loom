@@ -152,3 +152,38 @@ def test_resolve_routes_the_args_and_marks_a_failed_append_completed(tmp_path, m
     assert failed and "RuntimeError" in failed[0]["args"]
     args = json.loads(failed[0]["args"]) if isinstance(failed[0]["args"], str) else failed[0]["args"]
     assert args["draft_id"] == record.thread_id.removeprefix("mailbox:")
+
+
+def test_a_gateway_veto_closes_the_record_and_never_touches_imap(tmp_path):
+    """P1-6: an expired scope must not leave an unclearable pending; reject and approve both close."""
+    settings = make_settings(tmp_path)
+    _draft, record, seams = make_request(tmp_path, settings)
+    transport = FakeMailTransport()
+
+    # Age the layer-4 scope past its expiry the way a long-idle queue looks.
+    raw = json.loads((tmp_path / "scopes.json").read_text(encoding="utf-8"))
+    raw[0]["expires_at"] = "2020-01-01T00:00:00+08:00"
+    (tmp_path / "scopes.json").write_text(json.dumps(raw), encoding="utf-8")
+
+    answer = resolve_mailbox_draft(record.pending_id, "reject", settings, seams["pending"], transport=transport)
+
+    assert "refused" in answer and "closed" in answer
+    assert transport.appended == []  # no IMAP call on either path
+    assert seams["pending"].get(record.pending_id).status != "pending"
+    rows = read_audit(tmp_path)
+    vetoes = [row for row in rows if row["decision"] == "rejected" and row["tool"] == "mail_create_draft"]
+    assert vetoes and "expired" in json.loads(vetoes[0]["args"])["reason"]
+
+
+def test_a_gateway_veto_on_approve_also_closes_without_appending(tmp_path):
+    settings = make_settings(tmp_path)
+    _draft, record, seams = make_request(tmp_path, settings)
+    transport = FakeMailTransport()
+    raw = json.loads((tmp_path / "scopes.json").read_text(encoding="utf-8"))
+    raw[0]["expires_at"] = "2020-01-01T00:00:00+08:00"
+    (tmp_path / "scopes.json").write_text(json.dumps(raw), encoding="utf-8")
+
+    resolve_mailbox_draft(record.pending_id, "approve", settings, seams["pending"], transport=transport)
+
+    assert transport.appended == []
+    assert seams["pending"].get(record.pending_id).status == "completed"

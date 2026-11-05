@@ -6,7 +6,7 @@
 {% endif %}
 {% if rows %}
 <table>
-  <tr><th>Timestamp</th><th>Actor</th><th>Tool</th><th>Decision</th><th>Correlation</th></tr>
+  <tr><th>Timestamp</th><th>Actor</th><th>Tool</th><th>Decision</th><th>Args</th><th>Correlation</th></tr>
   {% for row in rows %}
   <tr>
     <td>{{ row.ts }}</td>
