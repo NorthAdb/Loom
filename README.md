@@ -4,9 +4,9 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Current:** Gates 1–7 are done on main. The Gate 6+7 joint-audit rework (every demo smoke-covered, full approval payloads, `memory_write` enforced at the Tool Gateway, docs aligned) is on this branch ahead of the joint re-review. Next is Gate 8: real mail triage with a local-draft default. [docs/STATUS.md](docs/STATUS.md) · [docs/ROADMAP.md](docs/ROADMAP.md).
+**Current:** Gates 1–7 are done on main. The Gate 6+7 joint-audit rework and the Gate 8 feature code (mail triage: read-only fetch -> scoped triage -> local draft; the mailbox IMAP draft stays a separate scope plus approval) are on this branch ahead of the joint re-review. Gate 8 is not Passed: it still needs ≥2 weeks of owner dogfood on real mail. [docs/STATUS.md](docs/STATUS.md) · [docs/ROADMAP.md](docs/ROADMAP.md).
 
-当前：Gate 1–7 已完成。Gate 6+7 合关审计的返工（demo smoke 全覆盖、审批完整载荷、`memory_write` 进网关、文档对齐）在本分支，待一次联合终审。下一关是 Gate 8：真实邮件 triage，默认只写本地草稿。进度见 [docs/STATUS.md](docs/STATUS.md)，计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+当前：Gate 1–7 已完成。Gate 6+7 返工与 Gate 8 功能代码（邮件 triage：只读拉取 -> 带 Scope 的分类 -> 本地草稿；写入邮箱草稿仍是独立 Scope 加审批）在本分支，待一次联合终审。Gate 8 未 Passed：还需 ≥2 周真实邮件自用。进度见 [docs/STATUS.md](docs/STATUS.md)，计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 **Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, the Phase 5 calendar + email drafts, the Phase 6 browser fill, the Phase 7 budget, backup, eval, and CI, the Gate 6 package model, task state machine, and Context OS, and the Gate 7 Request Scope, Tool Gateway, untrusted inbound seam, local-only drafts, and Operator Console are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log with `correlation_id`, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, browser fill over headless Playwright chromium where open and fill prepare a page unapproved and submit waits for a human, a task state machine with restart recovery and idempotent effects, episodic/digest/feedback/compact context, scoped runs that fail closed at a Tool Gateway, the four-view console on 127.0.0.1, tests). See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -206,6 +206,32 @@ A keyless demo of the closed loop (accept -> scoped triage -> approval -> one lo
 python scripts/demo_gate7_inbound.py
 ```
 
+### Mail triage (Gate 8)
+
+Real mail comes in through a read-only IMAP fetch — the same `LOOM_IMAP_*` / `LOOM_MAIL_*` variables the draft tools use, nothing new to configure — and every write stays local by default. The console flow:
+
+1. Inbox → **Fetch mail**: the transport EXAMINEs the INBOX read-only (`BODY.PEEK`, nothing on the server is marked or moved) and new messages enter the inbound seam, each creating a triage task and a draft-only Request Scope. Fetched mail is untrusted: From is not the owner; bodies are data, never instructions.
+2. **Triage** (per-message button, or `loom triage <message_id>`): the message is classified into exactly one of reply / action / reading / archive and a local draft is proposed under that category. The proposal pauses for approval with the full to/subject/body visible; approving writes one `local_only` record to `drafts.json` and nothing else.
+3. Optional, from the Draft view: **Request mailbox draft** copies that local draft into the mailbox's drafts folder over IMAP APPEND. That is layer 4: a separate Request Scope, a separate approval, the same gateway and audit; the mailbox draft is never sent either.
+
+The side-effect layers (ADR-016), locked:
+
+| Layer | Action | Default? | Scope / approval |
+| --- | --- | --- | --- |
+| 1 | Read (fetch headers and a capped body into the local inbox) | yes | read via the read-only transport |
+| 2 | Local classification + local draft | **yes (the default write)** | draft-only scope; approval to write |
+| 3 | Mailbox labels / read state | no | off; its own action if ever enabled |
+| 4 | Mailbox draft via IMAP APPEND | no | the Gate 3 tools; separate scope + approval |
+| 5 | Send | **never** | no tool, no route, `send_permission` structurally false |
+
+A no-key demo of the whole path (sanitized sample, scripted model, fake transports):
+
+```bash
+python scripts/demo_gate8_mail_triage.py
+```
+
+邮件分类（Gate 8）：真实邮件经只读 IMAP 拉取（复用 `LOOM_IMAP_*` / `LOOM_MAIL_*`，无新配置），默认只写本地草稿。Console 流程：Inbox 里 Fetch（只读 EXAMINE + BODY.PEEK，不改动服务器状态）为每封信建 triage 任务与「仅草稿」Scope → Triage（或 `loom triage <message_id>`）把信分类为 reply/action/reading/archive 并提议本地草稿，审批展示完整收件人/主题/正文，批准后只落 `drafts.json`。可选的「写入邮箱草稿」是第 4 层：单独 Scope、单独审批、同一网关与审计，同样绝不发送；第 3 层（标签/已读）默认关闭，第 5 层（发送）不存在。试运行：`python scripts/demo_gate8_mail_triage.py`（无需 key 与网络）。
+
 ### Sandbox
 
 File tools work only inside the sandbox jail. Two transports, one rule set:
@@ -291,6 +317,7 @@ The every-day loop, in one place:
 loom chat                        # the REPL; side-effect tools pause for approve/reject
 loom worker                      # keep routines firing on their cron schedules
 loom approvals list              # resolve anything the gate held while you were away
+loom triage <message_id>         # run one inbox message through triage; a draft waits for approval
 loom memory facts                # what Loom firmly knows; `set`/`del` to author it
 loom memory digest|episodic|feedback|compact   # the working set: fold recent activity into the digest
 loom tasks list|show|recover     # the task state machine; recover after a restart
@@ -299,13 +326,15 @@ loom stats                       # budget, token spend, approval and failure cou
 loom eval                        # regression confidence: cases must stay green, the canary must stay red
 ```
 
+On the console, Inbox carries the **Fetch mail** button and a per-message **Triage** button, and a Draft can be copied to the mailbox drafts folder after its own approval (all three POST through the same session/CSRF/Origin boundary as an approval). 控制台的 Inbox 有 Fetch 与逐条 Triage 按钮，Draft 视图可发起「写入邮箱草稿」请求——三者与审批走同一套 session/CSRF/Origin 边界。
+
 Set a spending brake in `.env` before going hands-off: `LOOM_DAILY_BUDGET_TOKENS=200000` refuses new chat turns and routine runs once the day's estimate reaches the line (0 = unlimited), and the refusal lands in the audit log with `decision=rejected`. `LOOM_TOKEN_PRICE_USD_PER_1K` is optional and only turns the `loom stats` token count into a dollars estimate.
 
 预算与日常运维：`LOOM_DAILY_BUDGET_TOKENS` 是每日 token 闸（0 为不限），到达后新的 chat 回合与例程运行都会被拒绝并写入审计（`decision=rejected`）；`loom stats` 汇总预算、用量与审计计数；`loom eval` 跑回归评测，用例必须保持绿、canary 必须保持红。
 
 ### Demos
 
-Nine keyless demos (scripted models, local fixtures) each prove one path end to end; the browser one additionally needs chromium:
+Ten keyless demos (scripted models, local fixtures) each prove one path end to end; the browser one additionally needs chromium:
 
 ```bash
 python scripts/demo_gate1.py                # core loop: harmless tools answer, side effects gate
@@ -317,6 +346,7 @@ python scripts/demo_gate4_browser.py        # browser fill behind the human gate
 python scripts/demo_gate5.py                # budget brake, backup/restore, eval summary
 python scripts/demo_gate6_tasks.py          # task state machine and the Context OS (Gate 6)
 python scripts/demo_gate7_inbound.py        # simulated inbound loop: scope, gateway, local draft (Gate 7)
+python scripts/demo_gate8_mail_triage.py    # real-shaped mail: fetch, scoped triage, local draft, layer 4 (Gate 8)
 ```
 
 ### Backup and restore

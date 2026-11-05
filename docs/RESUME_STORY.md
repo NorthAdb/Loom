@@ -8,17 +8,17 @@ A personal AI agent that acts — writing files, drafting mail, filling web form
 
 ## What is running
 
-The core is a LangGraph graph (`src/loom/core/graph.py`): memory note → agent → gate for side-effect tools → tools, with sqlite checkpoints per thread id. Seventeen registered tools carry a declared side-effect flag; the gate interrupts with the tool's arguments before anything executes, and mail drafts additionally carry their full text in the approval payload. Browser fill goes through a request firewall that aborts every non-allowlisted request before it is sent, and the submit approval shows the page's real state read back from the browser, not the model's claims ([ADR-011](DECISIONS.md)). Inbound content is data, never instructions: a scoped run issues the minimal Request Scope (`send_permission` always false, `memory_write` default false, `issue_scope` the only mint), the Tool Gateway checks each call at the gate and again at execution, and a scope whose `memory_write` is false refuses every memory-writing action ([ADR-014](DECISIONS.md)). Email has no send path in the codebase at all — drafts are IMAP APPENDs with the `\Draft` flag or `local_only` records in `drafts.json`, and a guard test greps for send verbs. The audit log is append-only JSONL; every Gate 7 row threads the scope's `correlation_id`. The design decisions and their consequences live in [DECISIONS.md](DECISIONS.md), the security boundary in [SECURITY.md](SECURITY.md), and the implemented-state source of truth in [STATUS.md](STATUS.md).
+The core is a LangGraph graph (`src/loom/core/graph.py`): memory note → agent → gate for side-effect tools → tools, with sqlite checkpoints per thread id. Seventeen registered tools carry a declared side-effect flag; the gate interrupts with the tool's arguments before anything executes, and mail drafts additionally carry their full text in the approval payload. Browser fill goes through a request firewall that aborts every non-allowlisted request before it is sent, and the submit approval shows the page's real state read back from the browser, not the model's claims ([ADR-011](DECISIONS.md)). Inbound content is data, never instructions: a scoped run issues the minimal Request Scope (`send_permission` always false, `memory_write` default false, `issue_scope` the only mint), the Tool Gateway checks each call at the gate and again at execution, and a scope whose `memory_write` is false refuses every memory-writing action ([ADR-014](DECISIONS.md)). The Gate 8 triage path is running behind the same seam: a read-only IMAP fetch feeds the inbound seam, `run_triage` drives the scoped turn (a message with no scope skips the run entirely), and the default write is one categorized local draft; the mailbox IMAP draft stays a separate scope plus approval through the layer-4 control plane. Email has no send path in the codebase at all — drafts are IMAP APPENDs with the `\Draft` flag or `local_only` records in `drafts.json`, and a guard test greps for send verbs. The audit log is append-only JSONL; every Gate 7 row threads the scope's `correlation_id`. The design decisions and their consequences live in [DECISIONS.md](DECISIONS.md), the security boundary in [SECURITY.md](SECURITY.md), and the implemented-state source of truth in [STATUS.md](STATUS.md).
 
 ## Numbers you can check
 
 | Claim | Number | Reproduce with |
 | --- | --- | --- |
-| Test suite | 441 passed, 1 skipped with chromium installed (the real-browser tests skip on CI and other browser-less environments) | `pytest -q` |
+| Test suite | 481 passed, 1 skipped with chromium installed (the real-browser tests skip on CI and other browser-less environments) | `pytest -q` |
 | Capabilities behind the gate | 17 registered tools, side-effect flags pinned exactly | `pytest tests/test_gate3_guards.py tests/test_gate4_guards.py -q` |
 | Scope and gateway | every scoped call checked at the gate and at execution; fail closed, refusal audited, `memory_write` enforced | `pytest tests/test_tool_gateway.py tests/test_runtime_gateway.py -q` |
-| Regression eval | 12 cases, 11 counted + 1 expect_fail canary judged red, 100% counted pass rate | `loom eval` |
-| Demos | 9 demo scripts, 31 scenarios, all passing (the browser one also needs chromium) | run each `scripts/demo_*.py` |
+| Regression eval | 15 cases, 14 counted + 1 expect_fail canary judged red, 100% counted pass rate | `loom eval` |
+| Demos | 10 demo scripts, 36 scenarios, all passing (the browser one also needs chromium) | run each `scripts/demo_*.py` |
 | Audit trail | one JSON line per decision: `ts`, `run_id`, `actor`, `tool`, `args`, `decision`, plus `correlation_id` on every Gate 7 row | `pytest tests/test_audit.py tests/test_audit_correlation.py -q` |
 | Daily budget brake | refused turn + audit row `reason=daily budget exceeded` at a 1-token limit | `pytest tests/test_budget.py -q` |
 | Recoverability | 9 data-dir roots in a zip; restore refuses archive members that escape the data dir; `scopes.json` deliberately excluded (ADR-019) | `pytest tests/test_backup.py -q` |
@@ -39,6 +39,7 @@ pip install -e ".[dev,browser]" && playwright install chromium
 cp .env.example .env            # set LOOM_ENV=dev; LLM_API_KEY only for real chat
 loom doctor
 python scripts/demo_gate7_inbound.py   # the Life Operator loop: inbound, scope, gateway, local draft
+python scripts/demo_gate8_mail_triage.py   # real-shaped mail: fetch, scoped triage, local draft, layer 4
 python scripts/demo_gate5.py           # budget brake, backup/restore, eval summary
 python scripts/demo_gate4_browser.py
 loom eval
@@ -48,4 +49,4 @@ The demos are keyless (scripted models, local fixtures); the full README walk is
 
 ## In progress and not yet claimed
 
-Gate 8 (real mail triage, default write is a local draft) is being implemented; Gate 9 (the MCP registry with schema fingerprints) is planned. Both are in [ROADMAP.md](ROADMAP.md) and locked in [DECISIONS.md](DECISIONS.md). This page does not claim them until the code and its evidence are on main.
+Gate 8's feature code (real mail triage, default write is a local draft) is on this branch; it is not Passed — the ≥2-week owner dogfood on real mail is still open ([STATUS.md](STATUS.md)). Gate 9 (the MCP registry with schema fingerprints) is planned. Both are in [ROADMAP.md](ROADMAP.md) and locked in [DECISIONS.md](DECISIONS.md). This page does not claim Gate 8 as Passed until the dogfood evidence exists and the code is on main.
