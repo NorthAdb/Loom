@@ -74,15 +74,24 @@ class McpClient:
         env = dict(os.environ)
         if self._credential_env:
             env[self._credential_env] = os.environ.get(self._credential_env, "")
-        self._proc = subprocess.Popen(
-            self._command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            env=env,
-        )
+        try:
+            self._proc = subprocess.Popen(
+                self._command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                env=env,
+            )
+        except OSError as exc:
+            # A raw WinError 193 or ENOENT tells the operator nothing; the
+            # usual cause is a script path as the first element instead of an
+            # interpreter. The command itself is registry data, not a secret.
+            raise McpError(
+                f"could not start the mcp server {self._command}: {exc}; "
+                "the first command element must be an executable, e.g. [python, server.py]"
+            ) from None
         self._threads = [
             threading.Thread(target=self._drain_responses, daemon=True),
             threading.Thread(target=self._drain_stderr, daemon=True),

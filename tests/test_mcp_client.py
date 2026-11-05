@@ -135,3 +135,13 @@ def test_an_error_result_from_the_server_surfaces_as_mcperror():
         client.initialize()
         with pytest.raises(McpError, match="unknown tool"):
             client.call_tool("notes_delete", {})
+
+
+def test_a_script_as_the_first_command_element_names_the_real_problem(tmp_path):
+    """WinError 193 alone is useless; the error names the executable requirement (dogfood finding)."""
+    client = McpClient(["D:/definitely/not/an/executable.py"])
+
+    with pytest.raises(McpError) as excinfo:
+        client.start()
+
+    assert "first command element must be an executable" in str(excinfo.value)
