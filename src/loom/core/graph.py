@@ -24,7 +24,7 @@ from loom.memory import (
 from loom.memory.context import build_context_note
 from loom.memory.episodic import EpisodicStore
 from loom.ops.checkpoints import make_checkpointer
-from loom.tools import APPROVAL_SIZE_LIMIT, make_tools
+from loom.tools import APPROVAL_SIZE_LIMIT, ToolSpec, make_tools
 
 logger = logging.getLogger("loom")
 
@@ -107,12 +107,15 @@ def build_graph(
     memory: SemanticMemory | None = None,
     transports: dict | None = None,
     gateway: ToolGateway | None = None,
+    extra_registry: "dict[str, ToolSpec] | None" = None,
 ):
     """Compile the pre_agent/agent/gate/tools/post_turn/aborted graph. Long-lived callers pass the
     checkpointer so the connection lifecycle stays with them. Tests inject a fake `memory` and
     fake mail/calendar `transports`; None builds the real ones from settings. A `gateway` turns on
-    the Gate 7 scope checks at the gate and in run_tools; None keeps the Gate 1-5 behavior."""
-    registry = make_tools(settings, transports)
+    the Gate 7 scope checks at the gate and in run_tools; None keeps the Gate 1-5 behavior.
+    `extra_registry` merges additional ToolSpecs (the Gate 9 MCP registry) after make_tools, so
+    `mcp:` names resolve through the same gate and run_tools seams."""
+    registry = {**make_tools(settings, transports), **(extra_registry or {})}
     audit = AuditLog(settings.loom_data_dir)
     facts_store = FactsStore(settings.loom_data_dir)
     semantic: SemanticMemory = memory if memory is not None else build_semantic_memory(settings)

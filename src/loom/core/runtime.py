@@ -10,10 +10,11 @@ from loom.core.llm import make_model
 from loom.gateway.scope import ScopeStore
 from loom.gateway.tool_gateway import ToolGateway
 from loom.ops.checkpoints import open_checkpointer
+from loom.tools.mcp import build_mcp_registry
 
 
 @contextmanager
-def open_graph(settings: Settings) -> Iterator:
+def open_graph(settings: Settings, *, mcp: bool = False) -> Iterator:
     """Yield the compiled graph over the checkpoint sqlite file.
 
     The sqlite connection opens for the with-block and closes on exit, so every
@@ -23,7 +24,13 @@ def open_graph(settings: Settings) -> Iterator:
     and a run that carries a scope_id — an inbound triage paused into the
     pending queue and resumed through the CLI or the console — is re-checked
     against its scope at the gate and again at execution.
+
+    `mcp=True` merges the registered MCP servers' tools into the registry
+    (ADR-020). The default is False and every entrypoint decides deliberately:
+    chat, routines, and triage keep MCP off until a caller flips the flag, so
+    an unregistered capability is a build-time decision, not a runtime drift.
     """
     gateway = ToolGateway(AuditLog(settings.loom_data_dir), ScopeStore(settings.loom_data_dir), allow_unscoped=True)
+    extra_registry = build_mcp_registry(settings) if mcp else None
     with open_checkpointer(settings.loom_data_dir) as checkpointer:
-        yield build_graph(make_model(settings), settings, checkpointer, gateway=gateway)
+        yield build_graph(make_model(settings), settings, checkpointer, gateway=gateway, extra_registry=extra_registry)
