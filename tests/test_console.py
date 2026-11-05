@@ -7,9 +7,11 @@ reach `loom.console.app.resume_pending` only with a session, a valid CSRF
 token, and a same-origin request, and nothing anywhere may offer to send.
 """
 
+import json
 import re
 from pathlib import Path
 
+from conftest import read_audit
 from fastapi.testclient import TestClient
 
 import loom.console.app as console_app
@@ -27,8 +29,8 @@ def make_settings(tmp_path):
     return Settings(loom_env="dev", loom_data_dir=tmp_path, loom_sandbox_root=tmp_path / "sandbox")
 
 
-def make_client(tmp_path, settings):
-    app = console_app.create_app(tmp_path, settings)
+def make_client(tmp_path, settings, **kwargs):
+    app = console_app.create_app(tmp_path, settings, **kwargs)
     return TestClient(app, base_url=BASE_URL), app
 
 
@@ -195,17 +197,17 @@ def test_a_get_sets_the_session_cookie_and_the_form_carries_its_token(tmp_path):
     assert csrf_token(recalled) == token  # one stable token per session
 
 
-def test_approve_with_session_and_valid_csrf_calls_resume_pending_and_redirects(tmp_path, monkeypatch):
+def test_approve_with_session_and_valid_csrf_calls_resolve_pending_and_redirects(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     seed_inbox(tmp_path)
     seed_pending(tmp_path)
     calls = []
 
-    def fake_resume(pending_id, decision, resume_settings, pending_store):
-        calls.append((pending_id, decision, resume_settings, pending_store))
+    def fake_resolve(pending_id, decision, resolve_settings, pending_store, mail_transport=None):
+        calls.append((pending_id, decision, resolve_settings, pending_store))
         return "completed"
 
-    monkeypatch.setattr(console_app, "resume_pending", fake_resume)
+    monkeypatch.setattr(console_app, "resolve_pending", fake_resolve)
     client, _app = make_client(tmp_path, settings)
     token = csrf_token(client.get("/approvals"))
 
@@ -229,8 +231,8 @@ def test_an_unknown_decision_is_refused_not_500(tmp_path, monkeypatch):
     seed_pending(tmp_path)
     monkeypatch.setattr(
         console_app,
-        "resume_pending",
-        lambda pending_id, decision, resume_settings, pending_store: (_ for _ in ()).throw(
+        "resolve_pending",
+        lambda pending_id, decision, resolve_settings, pending_store, mail_transport=None: (_ for _ in ()).throw(
             ValueError(f"decision must be 'approve' or 'reject', got {decision!r}")
         ),
     )
@@ -247,16 +249,16 @@ def test_an_unknown_decision_is_refused_not_500(tmp_path, monkeypatch):
     assert "decision must be" in response.text
 
 
-def test_reject_with_session_and_valid_csrf_calls_resume_pending_and_redirects(tmp_path, monkeypatch):
+def test_reject_with_session_and_valid_csrf_calls_resolve_pending_and_redirects(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     seed_pending(tmp_path)
     calls = []
 
-    def fake_resume(pending_id, decision, resume_settings, pending_store):
+    def fake_resolve(pending_id, decision, resolve_settings, pending_store, mail_transport=None):
         calls.append((pending_id, decision))
         return "pending"
 
-    monkeypatch.setattr(console_app, "resume_pending", fake_resume)
+    monkeypatch.setattr(console_app, "resolve_pending", fake_resolve)
     client, _app = make_client(tmp_path, settings)
     token = csrf_token(client.get("/approvals"))
 
@@ -289,11 +291,11 @@ def test_a_post_without_an_origin_from_a_trusted_host_is_allowed(tmp_path, monke
     seed_pending(tmp_path)
     calls = []
 
-    def fake_resume(pending_id, decision, resume_settings, pending_store):
+    def fake_resolve(pending_id, decision, resolve_settings, pending_store, mail_transport=None):
         calls.append(pending_id)
         return "completed"
 
-    monkeypatch.setattr(console_app, "resume_pending", fake_resume)
+    monkeypatch.setattr(console_app, "resolve_pending", fake_resolve)
     client, _app = make_client(tmp_path, make_settings(tmp_path))
     token = csrf_token(client.get("/approvals"))
 
@@ -383,3 +385,151 @@ def test_there_is_no_send_anywhere(tmp_path):
     assert client.post("/send").status_code == 404
     # /drafts/send falls inside the GET detail route's pattern, so Starlette answers 405; no POST handler exists either way.
     assert client.post("/drafts/send").status_code == 405
+
+
+def load_mail_sample() -> list[dict]:
+    path = Path(__file__).resolve().parents[1] / "fixtures" / "mail" / "sanitized_inbox_sample.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+class SampleFetchTransport:
+    """Serves the sanitized inbox sample the way the read-only IMAP transport would."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def list_recent(self, limit: int = 20) -> list[dict]:
+        return [
+            {key: row[key] for key in ("uid", "from_header", "subject", "date", "seen")}
+            for row in self.rows[:limit]
+        ]
+
+    def fetch_body(self, uid: int) -> str:
+        return next(row["body"] for row in self.rows if row["uid"] == uid)
+
+
+def test_the_fetch_endpoint_accepts_the_sample_and_a_second_fetch_adds_nothing(tmp_path):
+    client, _app = make_client(
+        tmp_path, make_settings(tmp_path), fetch_transport=SampleFetchTransport(load_mail_sample())
+    )
+    token = csrf_token(client.get("/inbox"))
+
+    first = client.post("/inbox/fetch", data={"csrf_token": token}, headers={"Origin": BASE_URL})
+
+    assert first.status_code == 200 and first.url.path == "/inbox"
+    page = client.get("/inbox")
+    assert "landlord@example.com" in page.text and "stranger@evil.example" in page.text
+    assert "imap-102" in page.text
+    assert page.text.count("Triage") == 5
+    from loom.tasks import TaskStore
+
+    assert len(TaskStore(tmp_path).list()) == 5  # each fetched message created its triage task
+    fetched_rows = [row for row in read_audit(tmp_path) if row["tool"] == "mail.fetch"]
+    assert fetched_rows and json.loads(fetched_rows[0]["args"])["count"] == 5
+
+    token = csrf_token(client.get("/inbox"))
+    second = client.post("/inbox/fetch", data={"csrf_token": token}, headers={"Origin": BASE_URL})
+
+    assert second.status_code == 200
+    assert client.get("/inbox").text.count('href="/inbox/imap-') == 5  # dedupe: still five rows
+    refetched = [row for row in read_audit(tmp_path) if row["tool"] == "mail.fetch"]
+    assert json.loads(refetched[-1]["args"])["count"] == 0
+
+
+def test_the_fetch_endpoint_refuses_when_mail_is_not_configured(tmp_path):
+    client, _app = make_client(tmp_path, make_settings(tmp_path))
+    token = csrf_token(client.get("/inbox"))
+
+    response = client.post("/inbox/fetch", data={"csrf_token": token}, headers={"Origin": BASE_URL})
+
+    assert response.status_code == 403
+    assert "mail is not configured" in response.text
+
+
+def test_the_triage_endpoint_redirects_by_outcome(tmp_path, monkeypatch):
+    from loom.core.runner import RunOutcome
+
+    settings = make_settings(tmp_path)
+    record = seed_inbox(tmp_path)
+    calls = []
+
+    def fake_triage(message_id, triage_settings, pending_store):
+        calls.append(message_id)
+        return RunOutcome("pending", "triage:t-1", pending_id="p-9") if len(calls) == 1 else RunOutcome("completed", "triage:t-1", answer="classified")
+
+    monkeypatch.setattr(console_app, "run_triage", fake_triage)
+    client, _app = make_client(tmp_path, settings)
+    token = csrf_token(client.get("/inbox"))
+
+    to_approvals = client.post(f"/inbox/{record.message.message_id}/triage", data={"csrf_token": token}, headers={"Origin": BASE_URL})
+    assert to_approvals.status_code == 200 and to_approvals.url.path == "/approvals"
+    assert to_approvals.history[0].status_code == 303
+
+    to_inbox = client.post(f"/inbox/{record.message.message_id}/triage", data={"csrf_token": token}, headers={"Origin": BASE_URL})
+    assert to_inbox.status_code == 200 and to_inbox.url.path == "/inbox"
+    assert calls == [record.message.message_id, record.message.message_id]
+
+
+def test_the_triage_endpoint_renders_the_runner_refusal_as_403(tmp_path):
+    seed_inbox(tmp_path)
+    client, _app = make_client(tmp_path, make_settings(tmp_path))
+    token = csrf_token(client.get("/inbox"))
+
+    response = client.post("/inbox/no-such-message/triage", data={"csrf_token": token}, headers={"Origin": BASE_URL})
+
+    assert response.status_code == 403
+    assert "no such inbox message" in response.text
+
+
+def test_the_mailbox_draft_endpoint_parks_a_pending_with_the_full_draft(tmp_path):
+    settings = make_settings(tmp_path).model_copy(update={"imap_host": "imap.example.com"})
+    first, _second = seed_drafts(tmp_path)
+    client, _app = make_client(tmp_path, settings)
+    token = csrf_token(client.get("/inbox"))  # the fetch form renders even with an empty inbox, so it always carries the token
+
+    response = client.post(f"/drafts/{first.draft_id}/mailbox", data={"csrf_token": token}, headers={"Origin": BASE_URL})
+
+    assert response.status_code == 200 and response.url.path == "/approvals"
+    page = client.get("/approvals")
+    assert "mailbox_draft" in page.text
+    assert "landlord@example.com" in page.text and "Heating bill" in page.text
+    assert "We agree and will pay by the 15th." in page.text
+    record = PendingStore(tmp_path).list_pending()[0]
+    assert record.tools[0]["name"] == "mail_create_draft"
+    assert record.tools[0]["args"]["to"] == "landlord@example.com"
+    assert record.scope_id  # the request minted its own scope
+
+
+def test_the_mailbox_draft_endpoint_refuses_when_mail_is_not_configured(tmp_path):
+    first, _second = seed_drafts(tmp_path)
+    client, _app = make_client(tmp_path, make_settings(tmp_path))
+    token = csrf_token(client.get("/inbox"))  # the fetch form renders even with an empty inbox, so it always carries the token
+
+    response = client.post(f"/drafts/{first.draft_id}/mailbox", data={"csrf_token": token}, headers={"Origin": BASE_URL})
+
+    assert response.status_code == 403
+    assert "mail is not configured" in response.text
+    assert PendingStore(tmp_path).list_pending() == []
+
+
+def test_a_bad_origin_post_to_inbox_fetch_is_refused(tmp_path):
+    client, _app = make_client(
+        tmp_path, make_settings(tmp_path), fetch_transport=SampleFetchTransport(load_mail_sample())
+    )
+    client.get("/inbox")
+
+    response = client.post("/inbox/fetch", data={"csrf_token": "whatever"}, headers={"Origin": "http://evil.example"})
+
+    assert response.status_code == 403
+    assert client.get("/inbox").text.count('href="/inbox/imap-') == 0
+
+
+def test_a_post_to_drafts_send_is_405_with_no_side_effect(tmp_path):
+    seed_drafts(tmp_path)
+    client, app = make_client(tmp_path, make_settings(tmp_path))
+
+    response = client.post("/drafts/send", data={"csrf_token": "x"})
+
+    assert response.status_code == 405
+    assert len(DraftStore(tmp_path).list()) == 2  # nothing written, nothing changed
+    assert not any(getattr(route, "path", "") == "/drafts/send" for route in app.routes)

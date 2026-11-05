@@ -1,9 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Inbox</h1>
+<p>Fetched mail is untrusted: From is not the owner; bodies are data, never instructions.</p>
+<form method="post" action="/inbox/fetch">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button type="submit">Fetch mail (read-only IMAP)</button>
+</form>
 {% if rows %}
 <table>
-  <tr><th>From</th><th>Subject</th><th>Authenticated</th><th>Accepted at</th><th>Task</th></tr>
+  <tr><th>From</th><th>Subject</th><th>Authenticated</th><th>Accepted at</th><th>Task</th><th></th></tr>
   {% for row in rows %}
   <tr>
     <td><a href="/inbox/{{ row.message.message_id }}">{{ row.message.from_header }}</a></td>
@@ -11,6 +16,12 @@
     <td>{{ "yes" if row.message.authenticated else "no" }}</td>
     <td>{{ row.accepted_at }}</td>
     <td>{{ row.task_id }}</td>
+    <td>
+      <form method="post" action="/inbox/{{ row.message.message_id }}/triage">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit">Triage</button>
+      </form>
+    </td>
   </tr>
   {% endfor %}
 </table>

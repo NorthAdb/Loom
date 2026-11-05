@@ -13,7 +13,7 @@
     <td>{{ row.actor }}</td>
     <td>{{ row.tool }}</td>
     <td>{{ row.decision }}</td>
-    <td>{{ row.get("correlation_id") or "-" }}</td>
+    <td>{% if row.get("correlation_id") %}<a href="/audit?correlation_id={{ row.correlation_id }}">{{ row.correlation_id }}</a>{% else %}-{% endif %}</td>
   </tr>
   {% endfor %}
 </table>
