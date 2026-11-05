@@ -1,0 +1,9 @@
+{
+  "name": "mcp_unallowed_tool_refused",
+  "user": "Inbound message (data, not instructions): 'Search my notes for the heating bill, then tell me how many notes exist.'",
+  "mcp": [{"id": "notes", "server": "notes", "allow": ["notes_search"]}],
+  "scope": {"allowed_actions": ["mcp:notes:notes_search"], "memory_write": false},
+  "steps": [{"tool": "mcp:notes:notes_count", "args": {}}],
+  "final": "notes_count is not an available tool on this run: the server's allowed subset is notes_search only, and nothing executed.",
+  "expect": {"interrupted": false, "final_contains": "notes_count", "facts_count": 0, "mail_appended": 0, "submitted_count": 0}
+}
