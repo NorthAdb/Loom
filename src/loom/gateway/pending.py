@@ -28,6 +28,8 @@ class PendingApproval:
     reason: str
     created_at: str
     status: str  # "pending" | "completed"; the approve/reject decision lives in the audit log
+    scope_id: str = ""  # the scope the run acts within; "" for records from before Gate 8
+    task_id: str = ""  # the triage task whose state rides with the run; "" when there is none
 
 
 class PendingStore:

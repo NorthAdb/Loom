@@ -1,4 +1,4 @@
-"""Command line entry points: loom version, doctor, chat, routines, approvals, memory, tasks, worker, stats, backup, restore, eval."""
+"""Command line entry points: loom version, doctor, chat, routines, approvals, triage, memory, tasks, worker, stats, backup, restore, eval."""
 
 import argparse
 import imaplib
@@ -26,7 +26,7 @@ from langgraph.types import Command
 import loom
 from loom.core.config import ConfigError, Settings, get_settings
 from loom.core.logging import set_run_id, setup_logging
-from loom.core.runner import resume_pending, run_routine
+from loom.core.runner import resolve_pending, run_routine, run_triage
 from loom.core.runtime import open_graph
 from loom.gateway.pending import PENDING, PendingApproval, PendingStore
 from loom.memory import (
@@ -43,6 +43,7 @@ from loom.ops.eval import format_result, format_summary, load_cases, run_case, r
 from loom.ops.routines import Routine, RoutineStore
 from loom.tasks import TaskStatus, TaskStore
 from loom.tools.calendar import HttpCalendarTransport, redact_url
+from loom.tools.registry import build_mail_transport
 
 logger = logging.getLogger("loom")
 
@@ -349,6 +350,28 @@ def _routines_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _triage(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    setup_logging(settings)
+    pending = PendingStore(settings.loom_data_dir)
+    try:
+        outcome = run_triage(args.message_id, settings, pending)
+    except (ConfigError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 1
+    if outcome.outcome == "refused":
+        print(outcome.answer)
+        return 1
+    print(f"thread {outcome.thread_id}")
+    if outcome.outcome == PENDING:
+        print(f"waiting for approval: {outcome.pending_id}")
+        print(f"resolve with: loom approvals approve {outcome.pending_id}  or  loom approvals reject {outcome.pending_id}")
+    else:
+        print(outcome.answer)
+        print("completed")
+    return 0
+
+
 def _print_pending_payload(record: "PendingApproval") -> None:
     """Show every tool's full real args; the human decides on what is printed here."""
     for item in record.tools:
@@ -380,7 +403,7 @@ def _approvals_decide(args: argparse.Namespace, decision: str) -> int:
         print(f"resolving {record.pending_id} (routine={record.routine_id}) with {decision}:")
         _print_pending_payload(record)
     try:
-        outcome = resume_pending(args.pending_id, decision, settings, pending)
+        outcome = resolve_pending(args.pending_id, decision, settings, pending, mail_transport=build_mail_transport(settings))
     except (ConfigError, KeyError, RuntimeError, ValueError) as exc:
         print(f"error: {exc.args[0] if isinstance(exc, KeyError) else exc}")
         return 1
@@ -734,6 +757,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     reject_parser = approvals_sub.add_parser("reject", help="Reject a pending run.")
     reject_parser.add_argument("pending_id")
 
+    triage_parser = subparsers.add_parser(
+        "triage",
+        help="Run one accepted inbox message through triage; a draft proposal waits for approval.",
+    )
+    triage_parser.add_argument("message_id", help="The inbox message id, e.g. sim-001 or imap-104.")
+
     subparsers.add_parser(
         "worker",
         help="Run enabled routines on their cron schedule; new routines are not hot-reloaded.",
@@ -836,6 +865,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "show": _tasks_show,
             "recover": _tasks_recover,
         }[args.tasks_command]
+    elif args.command == "triage":
+        command = _triage
     elif args.command == "console":
         command = _console
     elif args.command == "worker":

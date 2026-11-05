@@ -1,11 +1,15 @@
-"""Run one routine through the shared graph, or resume a paused run after a human decision.
+"""Run one routine or one triage through the shared graph, or resume a paused run after a decision.
 
-Both entry points are the only non-chat callers of `runtime.open_graph`; there is
+These entry points are the only non-chat callers of `runtime.open_graph`; there is
 no second orchestration path. The trigger lands in the audit JSONL here; approval
 decisions and tool executions are audited by the graph's own nodes.
+`resolve_pending` is the single decision entry the CLI and the console call:
+graph-backed records resume there, mailbox-draft records resolve through their
+own deterministic control plane.
 """
 
 import logging
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,11 +22,18 @@ from loom.audit.log import AuditLog
 from loom.core.config import Settings
 from loom.core.logging import set_run_id
 from loom.core.runtime import open_graph
+from loom.gateway.mailbox_draft import MAILBOX_DRAFT_ROUTINE, resolve_mailbox_draft
 from loom.gateway.pending import COMPLETED, PENDING, PendingApproval, PendingStore
+from loom.gateway.scope import ScopeStore
+from loom.inbound.accept import compose_triage_prompt
+from loom.inbound.store import InboxStore
 from loom.ops.budget import guard_from_settings, turn_tokens
 from loom.ops.routines import Routine, RoutineStore, now_local
+from loom.tasks import TaskStatus, TaskStore
 
 logger = logging.getLogger("loom")
+
+TRIAGE_ROUTINE = "inbound_triage"  # the routine_id a triage pending carries; matches accept_inbound's task kind
 
 
 @dataclass(frozen=True)
@@ -155,3 +166,141 @@ def resume_pending(pending_id: str, decision: str, settings: Settings, pending: 
         with open_graph(settings) as opened:
             return drive(opened)
     return drive(graph)
+
+
+def _settle_task(store: TaskStore, task_id: str, status: TaskStatus, *, reason: str | None = None, result: str | None = None) -> None:
+    """Move the triage task with its run; bookkeeping that never breaks the run.
+
+    The row can be gone or already terminal when a message is triaged twice;
+    the audit trail is the record then, so store and machine errors are
+    logged and swallowed.
+    """
+    try:
+        store.transition(task_id, status, reason=reason, result=result)
+    except (KeyError, ValueError, sqlite3.Error) as exc:
+        logger.warning("task bookkeeping skipped", extra={"task_id": task_id, "target": status.value, "error": str(exc)})
+
+
+def run_triage(message_id: str, settings: Settings, pending: PendingStore, *, graph=None) -> RunOutcome:
+    """Trigger one triage turn for an accepted inbox message.
+
+    The turn runs like a routine run — budget-guarded (kind "triage"),
+    threaded as triage:{task_id}, triggered in the audit — but scoped: the
+    graph is invoked with the scope the accept step issued, so the gateway
+    checks every proposal against it. A message with no scope (an
+    unauthenticated sender) is skipped without a graph run: an
+    unauthenticated turn must not run with tool rights at all.
+    """
+    audit = AuditLog(settings.loom_data_dir)
+    try:
+        record = InboxStore(settings.loom_data_dir).get(message_id)
+    except KeyError as exc:
+        raise ValueError(exc.args[0]) from None
+    run_id = uuid.uuid4().hex
+    set_run_id(run_id)
+    thread_id = f"triage:{record.task_id}"
+    correlation_id = None
+    if record.scope_id:
+        try:
+            correlation_id = ScopeStore(settings.loom_data_dir).get(record.scope_id).correlation_id
+        except KeyError:
+            correlation_id = None  # scopes are excluded from backups; a dangling id is the gateway's refusal
+    audit.append(
+        run_id=run_id,
+        actor="console",
+        tool="inbound.triage",
+        args={"message_id": message_id, "task_id": record.task_id},
+        decision="triggered",
+        correlation_id=correlation_id,
+    )
+    if not record.scope_id:
+        audit.append(
+            run_id=run_id,
+            actor="console",
+            tool="inbound.triage",
+            args={"message_id": message_id},
+            decision="skipped",
+        )
+        return RunOutcome(COMPLETED, thread_id, answer="no scope was issued for this message; nothing to triage")
+    guard = guard_from_settings(settings, settings.loom_data_dir)
+    if guard is not None and not guard.allow("triage", run_id):
+        logger.warning("triage run refused by the daily token budget", extra={"message_id": message_id, "refusal": guard.refusal_line()})
+        return RunOutcome("refused", thread_id, answer=guard.refusal_line())
+    config = {"configurable": {"thread_id": thread_id}}
+    tasks = TaskStore(settings.loom_data_dir)
+
+    def drive(opened) -> RunOutcome:
+        result = opened.invoke(
+            {
+                "messages": [HumanMessage(content=compose_triage_prompt(record.message))],
+                "run_id": run_id,
+                "scope_id": record.scope_id or "",
+            },
+            config,
+        )
+        if guard is not None:
+            guard.record("triage", run_id, turn_tokens(result["messages"]))
+        if "__interrupt__" in result:
+            payload = result["__interrupt__"][0].value
+            triage_pending = PendingApproval(
+                pending_id=uuid.uuid4().hex,
+                thread_id=thread_id,
+                routine_id=TRIAGE_ROUTINE,
+                tools=payload["tools"],
+                reason=payload["reason"],
+                created_at=now_local(),
+                status=PENDING,
+                scope_id=record.scope_id or "",
+                task_id=record.task_id,
+            )
+            pending.add(triage_pending)
+            _settle_task(tasks, record.task_id, TaskStatus.WAITING_APPROVAL, reason="triage waits for the draft approval")
+            logger.info(
+                "triage run waits for approval",
+                extra={"message_id": message_id, "thread_id": thread_id, "pending_id": triage_pending.pending_id},
+            )
+            return RunOutcome(PENDING, thread_id, pending_id=triage_pending.pending_id)
+        answer = result["messages"][-1].content
+        _settle_task(tasks, record.task_id, TaskStatus.COMPLETED, result=str(answer))
+        logger.info("triage run completed", extra={"message_id": message_id, "thread_id": thread_id})
+        return RunOutcome(COMPLETED, thread_id, answer=answer)
+
+    if graph is None:
+        with open_graph(settings) as opened:
+            return drive(opened)
+    return drive(graph)
+
+
+def resolve_pending(
+    pending_id: str,
+    decision: str,
+    settings: Settings,
+    pending: PendingStore,
+    *,
+    graph=None,
+    mail_transport=None,
+) -> RunOutcome:
+    """Apply a human decision through the right path; the single entry the CLI and console call.
+
+    A mailbox_draft record resolves deterministically through its control
+    plane (no model, always audited); anything else resumes the paused graph
+    run. When a triage run completes — approve or reject — its task settles
+    through the state machine.
+    """
+    record = pending.get(pending_id)
+    if record.routine_id == MAILBOX_DRAFT_ROUTINE:
+        answer = resolve_mailbox_draft(pending_id, decision, settings, pending, transport=mail_transport)
+        return RunOutcome(COMPLETED, record.thread_id, answer=answer)
+    outcome = resume_pending(pending_id, decision, settings, pending, graph=graph)
+    if outcome.outcome == COMPLETED and record.routine_id == TRIAGE_ROUTINE and record.task_id:
+        tasks = TaskStore(settings.loom_data_dir)
+        try:
+            current = tasks.get(record.task_id).status
+        except (KeyError, sqlite3.Error):
+            return outcome
+        if current is TaskStatus.WAITING_APPROVAL:
+            # The machine forbids waiting_approval -> completed: the human has
+            # decided, so the run resumes to running before it completes.
+            _settle_task(tasks, record.task_id, TaskStatus.RUNNING, reason="human decision received")
+        _settle_task(tasks, record.task_id, TaskStatus.COMPLETED, result=outcome.answer)
+    return outcome

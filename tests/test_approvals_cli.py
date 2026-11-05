@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
 
@@ -5,6 +7,8 @@ import loom.cli
 import loom.core.runtime
 from loom.gateway.pending import PendingStore
 from loom.ops.routines import Routine, RoutineStore
+
+FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "inbound"
 
 
 def setup_env(monkeypatch, tmp_path):
@@ -164,3 +168,67 @@ def test_run_disabled_routine_exits_nonzero(monkeypatch, tmp_path, capsys):
 
     assert loom.cli.main(["routines", "run", "off"]) == 1
     assert "routine is disabled: off" in capsys.readouterr().out
+
+
+def _accept_owner_message(tmp_path):
+    from loom.audit.log import AuditLog
+    from loom.gateway import ScopeStore
+    from loom.inbound import InboxStore, accept_inbound
+    from loom.inbound.sim_mail import load_sim_mail
+    from loom.tasks import TaskStore
+
+    message = next(m for m in load_sim_mail(FIXTURES_DIR) if m.message_id == "sim-001")
+    return accept_inbound(
+        message,
+        tasks=TaskStore(tmp_path),
+        scopes=ScopeStore(tmp_path),
+        audit=AuditLog(tmp_path),
+        inbox=InboxStore(tmp_path),
+    )
+
+
+def test_triage_command_pends_and_the_approval_completes_the_task(monkeypatch, tmp_path, capsys):
+    setup_env(monkeypatch, tmp_path)
+    _task, _scope = _accept_owner_message(tmp_path)
+    patch_model(
+        monkeypatch,
+        [
+            tool_call_msg(
+                "draft_create_local",
+                {"to": "landlord@example.com", "subject": "Heating bill", "body": "We agree and will pay by the 15th.", "category": "reply"},
+            ),
+            AIMessage(content="Draft stored for your review."),
+        ],
+    )
+
+    assert loom.cli.main(["triage", "sim-001"]) == 0
+    out = capsys.readouterr().out
+    assert "thread triage:" in out
+    assert "waiting for approval" in out
+    pending_id = PendingStore(tmp_path).list_pending()[0].pending_id
+    assert pending_id in out
+
+    assert loom.cli.main(["approvals", "list"]) == 0
+    listed = capsys.readouterr().out
+    assert "inbound_triage" in listed and "category" in listed  # the full payload, classification included
+
+    assert loom.cli.main(["approvals", "approve", pending_id]) == 0
+    approved = capsys.readouterr().out
+    assert "Draft stored for your review." in approved
+    from loom.tasks import TaskStatus, TaskStore
+    from loom.tools.drafts import DraftStore
+
+    drafts = DraftStore(tmp_path).list()
+    assert len(drafts) == 1 and drafts[0].category == "reply"
+    decisions = [(record["tool"], record["decision"]) for record in read_audit(tmp_path)]
+    assert ("draft_create_local", "approved") in decisions and ("draft_create_local", "executed") in decisions
+    pending_record = PendingStore(tmp_path).get(pending_id)
+    assert pending_record.routine_id == "inbound_triage" and pending_record.task_id
+    assert TaskStore(tmp_path).get(pending_record.task_id).status is TaskStatus.COMPLETED
+
+
+def test_triage_command_refuses_an_unknown_message_with_nonzero_exit(monkeypatch, tmp_path, capsys):
+    setup_env(monkeypatch, tmp_path)
+
+    assert loom.cli.main(["triage", "no-such-message"]) == 1
+    assert "no such inbox message" in capsys.readouterr().out
