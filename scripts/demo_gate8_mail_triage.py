@@ -158,9 +158,19 @@ def scenario_a(seams: Seams) -> None:
             subject=row["subject"],
             body=transport.fetch_body(row["uid"]),
             received_at=row["date"],
-            authenticated=True,  # the channel is the owner's mailbox; the body stays untrusted data
+            # A From header is never an identity; the fetch click is the
+            # control plane acting, which is where the draft-only scope
+            # comes from.
+            authenticated=False,
         )
-        accept_inbound(message, tasks=seams.tasks, scopes=seams.scopes, audit=seams.audit, inbox=seams.inbox)
+        accept_inbound(
+            message,
+            tasks=seams.tasks,
+            scopes=seams.scopes,
+            audit=seams.audit,
+            inbox=seams.inbox,
+            control_plane_scope=True,
+        )
         accepted += 1
     tasks = seams.tasks.list()
     scopes = seams.scopes.list()

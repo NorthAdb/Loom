@@ -20,13 +20,16 @@ _OWNER_ACTIONS = frozenset({"draft_create_local"})
 _TRIAGE_ACTIONS = frozenset()
 
 
-def refresh_triage_scope(message: InboundMessage, scopes: ScopeStore) -> RequestScope:
+def refresh_triage_scope(
+    message: InboundMessage, scopes: ScopeStore, *, correlation_id: str | None = None
+) -> RequestScope:
     """Mint one fresh triage scope for a message whose accept-time scope is gone or expired.
 
     The control plane's mint, on an explicit operator action (a triage click
     or the `loom triage` command): the same minimal draft-only actions, the
     same memory_write=false and approval-required posture. The model has no
-    path to this function.
+    path to this function. `correlation_id` re-threads a replacement scope to
+    the acceptance it replaces, so the message's audit chain stays one chain.
     """
     scope = issue_scope(
         "owner",
@@ -35,6 +38,7 @@ def refresh_triage_scope(message: InboundMessage, scopes: ScopeStore) -> Request
         _OWNER_ACTIONS,
         memory_write=False,
         approval_required=True,
+        correlation_id=correlation_id,
     )
     scopes.add(scope)
     return scope
@@ -47,6 +51,7 @@ def accept_inbound(
     scopes: ScopeStore,
     audit: AuditLog,
     inbox: InboxStore,
+    control_plane_scope: bool = False,
 ) -> "tuple[Task, RequestScope | None]":
     """Record, task, and scope one inbound message; returns (task, scope or None).
 
@@ -54,10 +59,16 @@ def accept_inbound(
     subject text reaches the task store. The audit row records the accepted
     envelope (from and subject, capped by the audit's own rules) with the
     scope's correlation_id when a scope exists.
+
+    A scope is issued when the sender is authenticated (the control plane's
+    own verdict) or when `control_plane_scope` is set: the operator explicitly
+    pulled the message, which is the control plane acting, so the triage turn
+    gets the same minimal draft-only scope even though the From header stays
+    unverified. `authenticated` is never set true by this function.
     """
     task = tasks.create("inbound_triage", f"inbound {message.channel} {message.message_id}")
     scope: RequestScope | None = None
-    if message.authenticated:
+    if message.authenticated or control_plane_scope:
         scope = refresh_triage_scope(message, scopes)
     tasks.transition(task.task_id, TaskStatus.RUNNING)
     task = tasks.get(task.task_id)

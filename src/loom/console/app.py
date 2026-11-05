@@ -159,10 +159,21 @@ def create_app(
                 subject=row["subject"],
                 body=transport.fetch_body(row["uid"]),
                 received_at=row["date"] or now_local(),
-                authenticated=True,
+                # A From header is never an identity: mail pulled from the
+                # owner's mailbox is still mail from an unverified sender.
+                authenticated=False,
             )
+            # The fetch click is the control plane acting, so the triage turn
+            # gets the minimal draft-only scope even though the sender stays
+            # unverified; the scope's principal is the control plane's "owner",
+            # never the From header.
             accept_inbound(
-                message, tasks=TaskStore(data_dir), scopes=ScopeStore(data_dir), audit=audit_log, inbox=inbox
+                message,
+                tasks=TaskStore(data_dir),
+                scopes=ScopeStore(data_dir),
+                audit=audit_log,
+                inbox=inbox,
+                control_plane_scope=True,
             )
             new += 1
         audit_log.append(

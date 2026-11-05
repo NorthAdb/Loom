@@ -18,7 +18,9 @@ import loom.console.app as console_app
 from loom.audit.log import AuditLog
 from loom.core.config import Settings
 from loom.gateway.pending import PendingApproval, PendingStore
+from loom.gateway.scope import ScopeStore
 from loom.inbound import InboundMessage, InboxStore
+from loom.inbound.accept import compose_triage_prompt
 from loom.tools.drafts import DraftStore
 
 BASE_URL = "http://127.0.0.1:8688"
@@ -533,3 +535,26 @@ def test_a_post_to_drafts_send_is_405_with_no_side_effect(tmp_path):
     assert response.status_code == 405
     assert len(DraftStore(tmp_path).list()) == 2  # nothing written, nothing changed
     assert not any(getattr(route, "path", "") == "/drafts/send" for route in app.routes)
+
+
+def test_fetched_mail_is_never_an_authenticated_owner(tmp_path):
+    """P1-3: a From header is not an identity; the fetch click is the control plane's scope, not the sender's."""
+    rows = [row for row in load_mail_sample() if row["from_header"] == "stranger@evil.example"]
+    client, _app = make_client(tmp_path, make_settings(tmp_path), fetch_transport=SampleFetchTransport(rows))
+    token = csrf_token(client.get("/inbox"))
+
+    response = client.post("/inbox/fetch", data={"csrf_token": token}, headers={"Origin": BASE_URL})
+
+    assert response.status_code == 200
+    detail = client.get("/inbox/imap-104").text
+    assert "no" in detail  # the Authenticated column shows the sender is unverified
+    assert "authenticated owner" not in detail
+    record = InboxStore(tmp_path).get("imap-104")
+    assert record.message.authenticated is False
+    assert record.message.from_header == "stranger@evil.example"
+    prompt = compose_triage_prompt(record.message)
+    assert "authenticated owner" not in prompt and "unauthenticated sender" in prompt
+    scope = ScopeStore(tmp_path).get(record.scope_id)
+    assert scope.principal == "owner"  # the control plane, never the From header
+    assert scope.allowed_actions == frozenset({"draft_create_local"})
+    assert scope.memory_write is False

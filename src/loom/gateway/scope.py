@@ -83,13 +83,15 @@ def issue_scope(
     approval_required: bool = True,
     expires_at: str | None = None,
     ttl_seconds: int | None = 3600,
+    correlation_id: str | None = None,
 ) -> RequestScope:
     """Mint one scope. The only construction path; callers never build RequestScope directly.
 
     memory_write defaults false and approval_required defaults true — inbound
     gets no memory write and every side effect waits for a human unless the
     control plane says otherwise. Expiry: an explicit expires_at wins, else
-    ttl_seconds from now, else (both None) no expiry.
+    ttl_seconds from now, else (both None) no expiry. `correlation_id` re-threads
+    a replacement scope to the acceptance it replaces; None mints a fresh id.
     """
     if expires_at is None and ttl_seconds is not None:
         expires_at = (datetime.now().astimezone() + timedelta(seconds=ttl_seconds)).isoformat()
@@ -102,7 +104,7 @@ def issue_scope(
         memory_write=memory_write,
         approval_required=approval_required,
         expires_at=expires_at,
-        correlation_id=uuid.uuid4().hex,
+        correlation_id=correlation_id or uuid.uuid4().hex,
     )
 
 
