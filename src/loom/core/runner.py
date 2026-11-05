@@ -155,7 +155,8 @@ def resume_pending(pending_id: str, decision: str, settings: Settings, pending: 
             )
             return RunOutcome(PENDING, record.thread_id, pending_id=pending_id)
         pending.set_status(pending_id, COMPLETED)
-        _settle(store, record.routine_id, COMPLETED)
+        if not record.task_id:  # a triage pending is not routine-backed; its task settles in resolve_pending
+            _settle(store, record.routine_id, COMPLETED)
         logger.info(
             "pending approval resolved",
             extra={"thread_id": record.thread_id, "pending_id": pending_id, "decision": decision},
