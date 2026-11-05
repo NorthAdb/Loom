@@ -43,13 +43,17 @@ class ToolGateway:
         self._scopes = scopes
         self._allow_unscoped = allow_unscoped
 
-    def check(self, scope_id: str | None, tool_name: str, *, side_effect: bool, run_id: str) -> GatewayDecision:
+    def check(
+        self, scope_id: str | None, tool_name: str, *, side_effect: bool, run_id: str, memory_write: bool = False
+    ) -> GatewayDecision:
         """Authorize one proposed call, or refuse with the reason audited.
 
         The order is the fail-closed order: resolve the scope, then expiry,
-        then the explicit action set, then the approval posture. The audit
-        row is written before the caller may act; an audit failure refuses
-        even an otherwise-allowed call.
+        then the explicit action set, then the memory-write posture, then the
+        approval posture. The audit row is written before the caller may act;
+        an audit failure refuses even an otherwise-allowed call. `memory_write`
+        is the registry's classification of the proposed action; a scope whose
+        `memory_write` is false refuses every memory-writing action.
         """
         scope: RequestScope | None = None
         try:
@@ -81,6 +85,14 @@ class ToolGateway:
                     run_id,
                     side_effect,
                     f"action {tool_name!r} is not in the scope's allowed actions {sorted(scope.allowed_actions)}",
+                )
+            if memory_write and not scope.memory_write:
+                return self._refuse(
+                    scope,
+                    tool_name,
+                    run_id,
+                    side_effect,
+                    f"action {tool_name!r} writes memory and the scope's memory_write is false",
                 )
         except ScopeError as exc:
             return self._refuse(scope, tool_name, run_id, side_effect, f"scope object is illegal: {exc}")

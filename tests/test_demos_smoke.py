@@ -15,8 +15,12 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-KEYLESS = ["demo_gate1.py", "demo_gate2.py", "demo_gate2_routines.py", "demo_gate3_memory.py", "demo_gate6_tasks.py", "demo_gate7_inbound.py"]
+# Every demo is covered: KEYLESS is derived from the scripts directory, so a
+# new demo joins the smoke set automatically and an omitted demo cannot hide.
+# A browser demo must be listed in BROWSER to be skipped without chromium.
 BROWSER = ["demo_gate4_browser.py"]
+_keyless = sorted(path.name for path in (REPO / "scripts").glob("demo_*.py"))
+KEYLESS = [name for name in _keyless if name not in BROWSER]
 
 
 def _run(script: str) -> None:

@@ -58,7 +58,17 @@ def seed_pending(tmp_path, pending_id="p-1"):
             pending_id=pending_id,
             thread_id="t-1",
             routine_id="daily_tidy",
-            tools=[{"name": "write_file", "args": {"path": "todo.md", "content": "hi"}}],
+            tools=[
+                {"name": "write_file", "args": {"path": "todo.md", "content": "hi"}},
+                {
+                    "name": "draft_create_local",
+                    "args": {
+                        "to": "landlord@example.com",
+                        "subject": "Heating bill",
+                        "body": "FULL_BODY_UNIQUE_PLEASE_PAY_BY_THE_15TH <script>alert(1)</script>",
+                    },
+                },
+            ],
             reason="approval gate",
             created_at="2026-11-05T09:30:00+08:00",
             status="pending",
@@ -129,6 +139,20 @@ def test_the_four_views_render_the_seeded_content(tmp_path):
     assert "gateway" in audit_page.text and "draft_create_local" in audit_page.text
     assert "allowed" in audit_page.text and "corr-1" in audit_page.text and "routine.run" in audit_page.text
     assert audit_page.text.count("<td>-</td>") == 1
+
+
+def test_the_approvals_page_shows_full_args_and_escapes_them(tmp_path):
+    seed_pending(tmp_path)
+    client, _app = make_client(tmp_path, make_settings(tmp_path))
+
+    page = client.get("/approvals")
+
+    assert page.status_code == 200
+    assert "write_file" in page.text and "draft_create_local" in page.text
+    assert "FULL_BODY_UNIQUE_PLEASE_PAY_BY_THE_15TH" in page.text
+    assert "landlord@example.com" in page.text and "Heating bill" in page.text
+    assert "<script>alert(1)</script>" not in page.text  # escaped, never executable
+    assert "\\u003cscript\\u003e" in page.text  # tojson's HTML-safe escape of the angle bracket
 
 
 def test_the_audit_trace_filter_and_limit_apply(tmp_path):

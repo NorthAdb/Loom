@@ -121,6 +121,8 @@ def create_app(data_dir: Path, settings, *, port: int = 8688, secret_key: str | 
 
     @app.get("/drafts")
     def drafts_view(request: Request, session: SessionDep):
+        # A POST to /drafts/send returns 405: the route table below has GETs
+        # only, and no send handler exists anywhere in the codebase.
         return render(request, "drafts.html", rows=drafts.list(), csrf_token=session["csrf_token"])
 
     @app.get("/drafts/{draft_id}")

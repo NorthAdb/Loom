@@ -102,10 +102,12 @@ def test_write_run_pends_list_shows_it_and_approve_executes(monkeypatch, tmp_pat
     assert pending_id in listed
     assert "daily_tidy" in listed
     assert "write_file" in listed
+    assert "todo.md" in listed and "hi" in listed  # the full real args, not just the tool name
 
     assert loom.cli.main(["approvals", "approve", pending_id]) == 0
     approved_out = capsys.readouterr().out
     assert "file written" in approved_out
+    assert "resolving" in approved_out and "todo.md" in approved_out  # the payload printed before the resume
     assert (tmp_path / "sandbox" / "todo.md").read_text(encoding="utf-8") == "hi"
     assert PendingStore(tmp_path).list_pending() == []
 

@@ -4,15 +4,15 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Current:** Gate 1–5 are done on main tip `1711d1b`. Next is Gate 6 (Context OS, including Task State). [docs/STATUS.md](docs/STATUS.md) · [docs/ROADMAP.md](docs/ROADMAP.md).
+**Current:** Gates 1–7 are done on main. The Gate 6+7 joint-audit rework (every demo smoke-covered, full approval payloads, `memory_write` enforced at the Tool Gateway, docs aligned) is on this branch ahead of the joint re-review. Next is Gate 8: real mail triage with a local-draft default. [docs/STATUS.md](docs/STATUS.md) · [docs/ROADMAP.md](docs/ROADMAP.md).
 
-当前：Gate 1–5 已完成（main `1711d1b`），下一关是 Gate 6。进度见 [docs/STATUS.md](docs/STATUS.md)，计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+当前：Gate 1–7 已完成。Gate 6+7 合关审计的返工（demo smoke 全覆盖、审批完整载荷、`memory_write` 进网关、文档对齐）在本分支，待一次联合终审。下一关是 Gate 8：真实邮件 triage，默认只写本地草稿。进度见 [docs/STATUS.md](docs/STATUS.md)，计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
-**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, the Phase 5 calendar + email drafts, the Phase 6 browser fill, and the Phase 7 budget, backup, eval, and CI are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, browser fill over headless Playwright chromium where open and fill prepare a page unapproved and submit waits for a human, tests). See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, the Phase 5 calendar + email drafts, the Phase 6 browser fill, the Phase 7 budget, backup, eval, and CI, the Gate 6 package model, task state machine, and Context OS, and the Gate 7 Request Scope, Tool Gateway, untrusted inbound seam, local-only drafts, and Operator Console are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log with `correlation_id`, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, browser fill over headless Playwright chromium where open and fill prepare a page unapproved and submit waits for a human, a task state machine with restart recovery and idempotent effects, episodic/digest/feedback/compact context, scoped runs that fail closed at a Tool Gateway, the four-view console on 127.0.0.1, tests). See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Loom is
 
-Loom is a personal agent the owner runs every day on one machine. Gate 1–5 is that loop in the tree: a local file sandbox, scheduled routines, a human approval gate, a memory baseline, calendar summaries, email drafts, and browser fill. The next bet is one Life Operator — untrusted inbound in, a gated life action out — and it starts at Gate 6. It is not built yet.
+Loom is a personal agent the owner runs every day on one machine. Gates 1–7 are that loop in the tree: a local file sandbox, scheduled routines, a human approval gate, a memory baseline plus a working Context OS, calendar summaries, email drafts, browser fill, and the Life Operator seam. Untrusted inbound comes in, a minimal Request Scope is issued, the Tool Gateway checks every call outside the model and fails closed, a human decides on the real payload, a local draft goes out, and every step lands in the audit log under one `correlation_id`. Gate 8 puts real mail behind that seam.
 
 Product boundaries and the locked decisions (2026-10-30, extended 2026-11-04) live in [docs/VISION.md](docs/VISION.md) and [docs/DECISIONS.md](docs/DECISIONS.md).
 
@@ -30,21 +30,24 @@ Product boundaries and the locked decisions (2026-10-30, extended 2026-11-04) li
 
 ## Architecture
 
-The LangGraph loop, the sandbox layer, and the memory baseline are built; MCP, Request Scope, and the Operator Console are not. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
+The LangGraph loop, the sandbox layer, the memory baseline, Request Scope, the Tool Gateway, and the Operator Console are built; real mail transport (Gate 8) and the MCP registry (Gate 9) are not. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
 
-Built through Gate 5:
+Built through Gate 7:
 
 ```text
-person / scheduler
+person / scheduler / inbound
         │
         ▼
-   LangGraph  ──►  memory (Mem0 + owned facts/preferences)
+   LangGraph  ──►  memory (facts + Mem0 + Context OS)
         │
         ▼
- approval gate
+ Request Scope + Tool Gateway (fail closed)
         │
         ▼
-  tools / MCP  ──►  local Docker sandbox
+ approval gate (human, on the full payload)
+        │
+        ▼
+  tools  ──►  sandbox / calendar / mail drafts / browser
 ```
 
 Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the skeleton.
@@ -56,7 +59,8 @@ Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the 
 | Language | Python | Engineering shell, core loop |
 | Orchestration | LangGraph | Core loop with approval gate |
 | Optional later | Pi as exec / sub-agent | Absent |
-| Memory | Facts table plus optional Mem0; light Context OS and Task State are Gate 6 | Facts table + self-hosted Mem0 baseline. Digest and Task State are not built |
+| Memory | Facts table plus optional Mem0, plus the Context OS (episodic, digest, feedback, compact) | Facts table + self-hosted Mem0 + Context OS in the tree |
+| Console | FastAPI + Jinja2 + HTMX, bound to 127.0.0.1 | Operator Console over Inbox / Draft / Approval / Audit (Gate 7) |
 | Browser | Playwright (headless chromium) behind the `browser` extra | Browser fill with an allowlisted transport and a human-gated submit |
 | Runtime | Local / single-host Docker | Sandbox service (compose) |
 | CI | GitHub Actions | ruff + pytest on 3.11/3.12, advisory pip-audit |
@@ -301,7 +305,7 @@ Set a spending brake in `.env` before going hands-off: `LOOM_DAILY_BUDGET_TOKENS
 
 ### Demos
 
-Seven keyless demos (scripted models, local fixtures) each prove one path end to end:
+Nine keyless demos (scripted models, local fixtures) each prove one path end to end; the browser one additionally needs chromium:
 
 ```bash
 python scripts/demo_gate1.py                # core loop: harmless tools answer, side effects gate
@@ -309,22 +313,21 @@ python scripts/demo_gate2.py                # sandbox tidy with approved writes
 python scripts/demo_gate2_routines.py       # routine triggers and the pending approval queue
 python scripts/demo_gate3_memory.py         # facts, the memory note, and the explicit write-back
 python scripts/demo_gate3_calendar_mail.py  # calendar summaries and draft gating
-python scripts/demo_gate4_browser.py        # browser fill behind the human gate
+python scripts/demo_gate4_browser.py        # browser fill behind the human gate (needs chromium)
 python scripts/demo_gate5.py                # budget brake, backup/restore, eval summary
-```
 python scripts/demo_gate6_tasks.py          # task state machine and the Context OS (Gate 6)
 python scripts/demo_gate7_inbound.py        # simulated inbound loop: scope, gateway, local draft (Gate 7)
 ```
 
 ### Backup and restore
 
-`loom backup [destination]` zips the five data-dir roots — `facts.db`, `routines.json`, `approvals/`, `audit/`, `checkpoints/` — into `loom-backup-<timestamp>.zip` (destination defaults to `./backups`). Nothing else is included: `.env`, spend ledgers, and the semantic-memory store never enter an archive, so a backup cannot become a secrets exfiltration path. Run it while Loom is idle; `facts.db` is captured as the file stands.
+`loom backup [destination]` zips the nine data-dir roots — `facts.db`, `routines.json`, `tasks.db`, `context.db`, `drafts.json`, `approvals/`, `audit/`, `checkpoints/`, `inbound/` — into `loom-backup-<timestamp>.zip` (destination defaults to `./backups`). Nothing else is included: `.env`, spend ledgers, the semantic-memory store, and `scopes.json` (a restore revokes authorizations instead of silently re-granting them, ADR-019) never enter an archive, so a backup cannot become a secrets exfiltration path. Run it while Loom is idle; `facts.db` is captured as the file stands.
 
 `loom restore <archive> [--force]` writes the archive's members back into the data dir. It refuses when a target file already exists unless you pass `--force`, and it refuses any archive member that would land outside the data dir. The drill:
 
 ```bash
 loom backup ./backups                                     # 1. archive the current state
-rm -rf "$LOOM_DATA_DIR"/{facts.db,routines.json,approvals,audit,checkpoints}
+rm -rf "$LOOM_DATA_DIR"/{facts.db,routines.json,tasks.db,context.db,drafts.json,approvals,audit,checkpoints,inbound}
 loom restore ./backups/loom-backup-<stamp>.zip             # 2. restore after a wipe
 loom memory facts                                          # 3. the facts are back
 ```

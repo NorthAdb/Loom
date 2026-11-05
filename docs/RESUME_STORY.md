@@ -4,30 +4,32 @@ What this repository demonstrates, for a reader who will only skim. Every number
 
 ## The problem
 
-A personal AI agent that acts — writing files, drafting mail, filling web forms — is one unreviewed step away from doing damage. The hard part is not making the model call tools; it is making every consequential step stop and wait for a person, every day, on one machine, without becoming too annoying to use. Loom is that loop: a self-hosted single-user agent where the model proposes, a gate holds the side effects, a human decides, and the evidence lands in an append-only audit log.
+A personal AI agent that acts — writing files, drafting mail, filling web forms — is one unreviewed step away from doing damage. The hard part is not making the model call tools; it is making every consequential step stop and wait for a person, every day, on one machine, without becoming too annoying to use. Loom is that loop: a self-hosted single-user agent where the model proposes, a Request Scope bounds the run, the Tool Gateway checks every call outside the model and fails closed, a human decides on the real payload, and the evidence lands in an append-only audit log under one `correlation_id`.
 
 ## What is running
 
-The core is a LangGraph graph (`src/loom/graph.py`): memory note → agent → gate for side-effect tools → tools, with sqlite checkpoints per thread id. Thirteen capabilities are registered tools with a declared side-effect flag (16 entries including the browser trio); the gate interrupts with the tool's arguments before anything executes, and mail drafts additionally carry their full text in the approval payload. Browser fill goes through a request firewall that aborts every non-allowlisted request before it is sent, and the submit approval shows the page's real state read back from the browser, not the model's claims ([ADR-011](DECISIONS.md)). Email has no send path in the codebase at all — drafts are IMAP APPENDs with the `\Draft` flag, and a guard test greps for send verbs. The design decisions and their consequences live in [DECISIONS.md](DECISIONS.md), the security boundary in [SECURITY.md](SECURITY.md), and the implemented-state source of truth in [STATUS.md](STATUS.md).
+The core is a LangGraph graph (`src/loom/core/graph.py`): memory note → agent → gate for side-effect tools → tools, with sqlite checkpoints per thread id. Seventeen registered tools carry a declared side-effect flag; the gate interrupts with the tool's arguments before anything executes, and mail drafts additionally carry their full text in the approval payload. Browser fill goes through a request firewall that aborts every non-allowlisted request before it is sent, and the submit approval shows the page's real state read back from the browser, not the model's claims ([ADR-011](DECISIONS.md)). Inbound content is data, never instructions: a scoped run issues the minimal Request Scope (`send_permission` always false, `memory_write` default false, `issue_scope` the only mint), the Tool Gateway checks each call at the gate and again at execution, and a scope whose `memory_write` is false refuses every memory-writing action ([ADR-014](DECISIONS.md)). Email has no send path in the codebase at all — drafts are IMAP APPENDs with the `\Draft` flag or `local_only` records in `drafts.json`, and a guard test greps for send verbs. The audit log is append-only JSONL; every Gate 7 row threads the scope's `correlation_id`. The design decisions and their consequences live in [DECISIONS.md](DECISIONS.md), the security boundary in [SECURITY.md](SECURITY.md), and the implemented-state source of truth in [STATUS.md](STATUS.md).
 
 ## Numbers you can check
 
 | Claim | Number | Reproduce with |
 | --- | --- | --- |
-| Test suite | 321 passed, 1 skipped with chromium installed (the real-browser tests skip on CI and other browser-less environments) | `pytest -q` |
-| Capabilities behind the gate | 16 registered tools, side-effect flags pinned exactly | `pytest tests/test_gate3_guards.py tests/test_gate4_guards.py -q` |
+| Test suite | 441 passed, 1 skipped with chromium installed (the real-browser tests skip on CI and other browser-less environments) | `pytest -q` |
+| Capabilities behind the gate | 17 registered tools, side-effect flags pinned exactly | `pytest tests/test_gate3_guards.py tests/test_gate4_guards.py -q` |
+| Scope and gateway | every scoped call checked at the gate and at execution; fail closed, refusal audited, `memory_write` enforced | `pytest tests/test_tool_gateway.py tests/test_runtime_gateway.py -q` |
 | Regression eval | 12 cases, 11 counted + 1 expect_fail canary judged red, 100% counted pass rate | `loom eval` |
-| Demos, all keyless | 7 demo scripts, 22 scenarios, all passing | run each `scripts/demo_*.py` |
-| Audit trail | one JSON line per decision with 6 fields (`ts`, `run_id`, `actor`, `tool`, `args`, `decision`) | `pytest tests/test_audit.py -q` |
+| Demos | 9 demo scripts, 31 scenarios, all passing (the browser one also needs chromium) | run each `scripts/demo_*.py` |
+| Audit trail | one JSON line per decision: `ts`, `run_id`, `actor`, `tool`, `args`, `decision`, plus `correlation_id` on every Gate 7 row | `pytest tests/test_audit.py tests/test_audit_correlation.py -q` |
 | Daily budget brake | refused turn + audit row `reason=daily budget exceeded` at a 1-token limit | `pytest tests/test_budget.py -q` |
-| Recoverability | 5 data-dir roots in a zip; restore refuses archive members that escape the data dir | `pytest tests/test_backup.py -q` |
+| Recoverability | 9 data-dir roots in a zip; restore refuses archive members that escape the data dir; `scopes.json` deliberately excluded (ADR-019) | `pytest tests/test_backup.py -q` |
 
 ## Tradeoffs
 
 - **Fill ungated, submit gated.** Typing into a form runs without approval because it submits nothing; the single click that submits is the only gated browser verb. The request firewall closes the gap a script could otherwise drive through.
 - **The budget is tokens, not dollars.** Dollars require inventing a per-model price; tokens come from the API's own usage metadata and brake exactly. An optional price key feeds a dollars estimate into `loom stats` only.
 - **Snapshots deferred.** The browser gate shows a url + field dictionary instead of a screenshot; screenshots are a later layer ([ADR-011](DECISIONS.md)).
-- **Two memory stores with one priority rule.** The self-owned facts table is authoritative; Mem0 recall is reference. Conflicts resolve toward the table by injection order, and secrets are refused at both write paths. The next memory plan is light context plus Task State ([ADR-013](DECISIONS.md)). It is not built, and this page does not claim it.
+- **Two memory stores with one priority rule.** The self-owned facts table is authoritative; Mem0 recall is reference. Conflicts resolve toward the table by injection order, and secrets are refused at both write paths. The light Context OS (episodic, digest, feedback, compact) and the task state machine are in the tree ([ADR-013](DECISIONS.md), Gate 6).
+- **Inbound runs are memory-blind.** A scoped run carries untrusted content, so it writes no facts, no semantic memory, and no episodic rows; the registry's `memory_write` classification and the scope's `memory_write=false` are also enforced at the Tool Gateway, not just skipped in the graph.
 - **Approval resumes are not re-budgeted.** A resumed run belongs to a turn a person already admitted, and each resume still needs that person.
 
 ## Try it
@@ -36,13 +38,14 @@ The core is a LangGraph graph (`src/loom/graph.py`): memory note → agent → g
 pip install -e ".[dev,browser]" && playwright install chromium
 cp .env.example .env            # set LOOM_ENV=dev; LLM_API_KEY only for real chat
 loom doctor
-python scripts/demo_gate5.py    # budget brake, backup/restore, eval summary
+python scripts/demo_gate7_inbound.py   # the Life Operator loop: inbound, scope, gateway, local draft
+python scripts/demo_gate5.py           # budget brake, backup/restore, eval summary
 python scripts/demo_gate4_browser.py
 loom eval
 ```
 
 The demos are keyless (scripted models, local fixtures); the full README walk is in [the README](../README.md).
 
-## Not in this tree
+## In progress and not yet claimed
 
-Gate 6 and later — Context OS and Task State, Request Scope, the Operator Console, mail triage — are planned in [ROADMAP.md](ROADMAP.md) and locked in [DECISIONS.md](DECISIONS.md). This page does not claim them. Resume wording for that loop waits until the features are in the repository.
+Gate 8 (real mail triage, default write is a local draft) is being implemented; Gate 9 (the MCP registry with schema fingerprints) is planned. Both are in [ROADMAP.md](ROADMAP.md) and locked in [DECISIONS.md](DECISIONS.md). This page does not claim them until the code and its evidence are on main.

@@ -4,7 +4,7 @@ Source of truth for what this repository contains. Update this file in the same 
 
 Last updated: 2026-11-05.
 
-Gate 1–5 passed on main tip `1711d1b` (PR #19, the Gate 4 redirect-landing hardening). Gate 6 and Gate 7 pass on this branch. The acceptance suite is 427 passed and 1 skipped with chromium installed; the commands are in [RESUME_STORY.md](RESUME_STORY.md). **In progress** is empty. Gate 8 and later are not in this tree.
+Gate 1–5 passed on main tip `1711d1b` (PR #19, the Gate 4 redirect-landing hardening). Gate 6 and Gate 7 passed at `3951a8d` (PRs #21, #22, #23); their joint-audit rework is this branch, ahead of the one joint re-review. The rework closes the audit's blocking findings: the demo smoke now covers every `scripts/demo_*.py` (derived from the directory, no omission list; 9/9 run at tip, or the browser demo skips with its reason printed), the approval surfaces show each tool's full real arguments (console Approvals view, `loom approvals list`, and the payload printed before a CLI decide; HTML-escaped and test-pinned), `memory_write` is enforced at the Tool Gateway (`ToolSpec.memory_write` classifies the action; a scope whose `memory_write` is false refuses it, refusal audited), and the docs match the tip. The compatibility face is option B: no re-exports; every `loom.mail` / `from loom import eval` caller was migrated in the same change, and the repository-wide search is zero hits. The acceptance suite is 441 passed and 1 skipped with chromium installed; the commands are in [RESUME_STORY.md](RESUME_STORY.md). **In progress** is Gate 8 (mail triage). Gate 9 is not started.
 
 ## Gate map (Gate对照)
 
@@ -60,14 +60,15 @@ Index of the acceptance gates. The rows name the phases; the detail stays in **D
 - [x] Phase B Operator Console: `console/app.py` factory — four views (Inbox over the inbound seam, Draft over the local draft store with `local only — never sent` on every row, Approval over the pending queue reusing the CLI's runner path, Audit over the JSONL with a `?correlation_id=` filter); binds 127.0.0.1 only via `loom console` (`LOOM_CONSOLE_PORT`-style flag, default 8688, no host flag); SessionMiddleware-backed session, a per-session CSRF token required on every POST, Origin/Host checks that refuse foreign origins, and an approval that requires the session — a hidden button is not an approval; the console owns no business rules, every action goes through the same scope, gateway, approval, and audit as the CLI
 - [x] Phase B durability: `BACKUP_ROOTS` grows to nine (drafts.json, inbound/) so a restore keeps the flagship draft and the inbox that proves it; scopes.json stays deliberately excluded — a restore revokes authorizations instead of silently re-granting them (ADR-019); the sandbox server now defaults to 127.0.0.1 and compose passes `--host 0.0.0.0` for its published loopback port
 - [x] Phase B negative suite: the handoff's ten, plus a control — forged owner cannot elevate (no scope, gateway refuses), a hidden facts-write persists nothing (facts, semantic, and episodic all stay empty), the send demand ends as an unknown-tool error, an expired scope is refused at the gate, an action outside the allow set is refused, the model cannot mint a scope (`issue_scope` is not a tool; the state's scope id is caller-set and store-resolved), an audit failure means no side effect, an approval POST without a session is refused, a bad Origin or Host is refused, and the Draft view has no send control or route; the control proves the approved happy path writes exactly one local draft threaded by `correlation_id`; demo `scripts/demo_gate7_inbound.py` (the flagship loop with the audit chain printed, plus the four refusals)
+- [x] Gate 6+7 joint-audit rework: the demo smoke derives its keyless set from the scripts directory, so every demo runs at tip (9/9 EXIT=0 locally, or the browser demo skips with its reason) and no omission list can hide a red demo again; `demo_gate3_calendar_mail.py` scans the packaged tree (`src/loom` recursive, `tools/mail.py`) instead of the deleted flat files; `demo_gate5.py` imports from the canonical `loom.ops` / `loom.cli.main` paths; approval visibility — the console Approvals view renders each pending tool's name plus its full real arguments (open `<details>`, Jinja-escaped and `tojson`-escaped, test-pinned with a unique body and a `<script>` payload), and `loom approvals list` prints full args while `loom approvals approve|reject` prints the payload before resuming; `memory_write` enforcement — `ToolSpec` carries a `memory_write` classification, the graph passes it to `ToolGateway.check` at the gate and at execution, and a scope whose `memory_write` is false refuses a memory-writing action with the rejection audited under the scope's `correlation_id` (negative tests in `tests/test_tool_gateway.py`); the import face is option B (zero `loom.mail` / `from loom import eval` callers, no re-exports); README Current/Architecture/Stack/Demos/Backup and RESUME_STORY numbers aligned to the tip (441 passed + 1 skipped, 17 tools, 9 demo scripts with 31 scenarios, 9 backup roots, audit rows with `correlation_id`); the Drafts view notes that a POST to `/drafts/send` 405s because no send handler exists
 
 ## In progress
 
-- None
+- Gate 8 (mail triage): real mail in, default write is a local classify plus a local draft (layer 1+2 of ADR-016); implementation underway, not yet claimed anywhere as Passed
 
 ## Not started
 
-Gate 7 and later only. None of these are started. Priority, order, and the hard boundaries: [ROADMAP.md](ROADMAP.md).
+Gate 8 is in progress (see **In progress**). Gate 9 and later are not started. Priority, order, and the hard boundaries: [ROADMAP.md](ROADMAP.md).
 
 ### Gate 8 — Mail triage (P0)
 
@@ -93,7 +94,7 @@ No design beyond the name is locked. Not part of P0.
 
 ## Standing constraints (not features)
 
-These are decisions, not tasks to “finish.” They stay in force for Gate 6 and later. See [DECISIONS.md](DECISIONS.md) and [SECURITY.md](SECURITY.md).
+These are decisions, not tasks to “finish.” They stay in force from Gate 6 onward. See [DECISIONS.md](DECISIONS.md) and [SECURITY.md](SECURITY.md).
 
 - Secrets stay out of model context, git, the audit log, and backups
 - Email never sends (`send_permission` is false; no send tool; a future Draft view has no send control)

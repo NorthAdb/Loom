@@ -28,7 +28,7 @@ from loom.core.config import ConfigError, Settings, get_settings
 from loom.core.logging import set_run_id, setup_logging
 from loom.core.runner import resume_pending, run_routine
 from loom.core.runtime import open_graph
-from loom.gateway.pending import PENDING, PendingStore
+from loom.gateway.pending import PENDING, PendingApproval, PendingStore
 from loom.memory import (
     DigestStore,
     EpisodicStore,
@@ -349,6 +349,12 @@ def _routines_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_pending_payload(record: "PendingApproval") -> None:
+    """Show every tool's full real args; the human decides on what is printed here."""
+    for item in record.tools:
+        print(f"  tool={item['name']}  args={json.dumps(item.get('args', {}), ensure_ascii=False)}")
+
+
 def _approvals_list(args: argparse.Namespace) -> int:
     settings = get_settings()
     waiting = PendingStore(settings.loom_data_dir).list_pending()
@@ -356,8 +362,8 @@ def _approvals_list(args: argparse.Namespace) -> int:
         print("(none)")
         return 0
     for record in waiting:
-        tools = ", ".join(item["name"] for item in record.tools)
-        print(f"{record.pending_id}  routine={record.routine_id}  tools=[{tools}]  created={record.created_at}")
+        print(f"{record.pending_id}  routine={record.routine_id}  created={record.created_at}")
+        _print_pending_payload(record)
     return 0
 
 
@@ -365,6 +371,14 @@ def _approvals_decide(args: argparse.Namespace, decision: str) -> int:
     settings = get_settings()
     setup_logging(settings)
     pending = PendingStore(settings.loom_data_dir)
+    try:
+        record = pending.get(args.pending_id)
+    except KeyError as exc:
+        print(f"error: {exc.args[0]}")
+        return 1
+    if record.status == PENDING:
+        print(f"resolving {record.pending_id} (routine={record.routine_id}) with {decision}:")
+        _print_pending_payload(record)
     try:
         outcome = resume_pending(args.pending_id, decision, settings, pending)
     except (ConfigError, KeyError, RuntimeError, ValueError) as exc:

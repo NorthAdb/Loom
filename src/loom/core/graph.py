@@ -200,7 +200,11 @@ def build_graph(
         if gateway is not None:
             verdicts = {
                 call["name"]: gateway.check(
-                    state.get("scope_id"), call["name"], side_effect=True, run_id=state.get("run_id", "")
+                    state.get("scope_id"),
+                    call["name"],
+                    side_effect=True,
+                    run_id=state.get("run_id", ""),
+                    memory_write=registry[call["name"]].memory_write,
                 )
                 for call in calls
             }
@@ -263,7 +267,11 @@ def build_graph(
                 # Execution-time re-check: an approval that went stale (the
                 # scope expired or the store changed) still cannot execute.
                 verdict = gateway.check(
-                    state.get("scope_id"), call["name"], side_effect=spec.side_effect, run_id=state.get("run_id", "")
+                    state.get("scope_id"),
+                    call["name"],
+                    side_effect=spec.side_effect,
+                    run_id=state.get("run_id", ""),
+                    memory_write=spec.memory_write,
                 )
                 if not verdict.allowed:
                     messages.append(

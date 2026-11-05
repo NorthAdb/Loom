@@ -28,12 +28,15 @@ class ToolSpec:
     `approval_context` is the ground truth the gate shows the human: merged
     over the tool's args, so the transport's view wins even when the model
     passes its own. browser_submit has no args, and the page's real state is
-    the thing being approved. It must never raise.
+    the thing being approved. It must never raise. `memory_write` classifies
+    the action as a memory write (Facts/Digest/Episodic/Feedback/Mem0); the
+    gateway refuses such a call for a scope whose `memory_write` is false.
     """
 
     func: BaseTool
     side_effect: bool
     approval_context: Callable[[], dict] | None = None
+    memory_write: bool = False
 
 
 @tool

@@ -192,11 +192,11 @@ def scenario_draft_reject_never_touches_the_transport(data_dir: Path, base_url: 
 
 def scenario_no_send_symbols_in_source() -> str:
     src = Path(__file__).resolve().parents[1] / "src" / "loom"
-    text = "\n".join(path.read_text(encoding="utf-8") for path in sorted(src.glob("*.py")))
+    text = "\n".join(path.read_text(encoding="utf-8") for path in sorted(src.rglob("*.py")))
     hits = [symbol for symbol in _FORBIDDEN if symbol in text]
     if hits:
         return f"FAIL (forbidden symbols in src/loom: {hits})"
-    mail_text = (src / "mail.py").read_text(encoding="utf-8")
+    mail_text = (src / "tools" / "mail.py").read_text(encoding="utf-8")
     verbs = set(re.findall(r"client\.(\w+)\(", mail_text))
     if not verbs <= _IMAP_VERBS:
         return f"FAIL (unexpected IMAP verbs: {sorted(verbs)})"
