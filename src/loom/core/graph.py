@@ -25,6 +25,7 @@ from loom.memory.context import build_context_note
 from loom.memory.episodic import EpisodicStore
 from loom.ops.checkpoints import make_checkpointer
 from loom.tools import APPROVAL_SIZE_LIMIT, ToolSpec, make_tools
+from loom.tools.mcp import McpError
 
 logger = logging.getLogger("loom")
 
@@ -290,12 +291,17 @@ def build_graph(
             except Exception as exc:  # noqa: BLE001 - a tool failure reaches the model as a result, not a crash
                 messages.append(ToolMessage(content=f"error: {exc}", tool_call_id=call["id"]))
                 if spec.side_effect:
+                    # An McpError is a policy veto (frozen server, fingerprint
+                    # drift, out-of-subset), not a malfunction: it lands as
+                    # `rejected`, correlated like the gateway rows, so the
+                    # §4.3 rejection chain is readable end to end.
+                    decision = "rejected" if isinstance(exc, McpError) else "failed"
                     audit.append(
                         run_id=state.get("run_id", ""),
                         actor="loom",
                         tool=call["name"],
-                        args=audited,
-                        decision="failed",
+                        args=audited if decision == "failed" else {**audited, "reason": str(exc)[:200]},
+                        decision=decision,
                         correlation_id=correlation_id,
                     )
                 continue

@@ -258,3 +258,20 @@ def test_7_the_approved_happy_path_executes_once_with_the_scope_correlation(tmp_
     assert executed[0]["correlation_id"] == scope.correlation_id
     authorized = [row for row in rows if row["decision"] == "authorized" and row["tool"] == "mcp:notes:notes_search"]
     assert authorized and all(row["correlation_id"] == scope.correlation_id for row in authorized)
+
+
+def test_8_the_graph_rejection_row_carries_the_scope_correlation(tmp_path):
+    """§4.3 letter: a bridge veto lands a correlated `rejected` row, not only the bridge's own."""
+    scripted = [tool_call_msg("mcp:notes:notes_search", {"query": "bill"}, "c1"), AIMessage(content="The server froze.")]
+    _settings, graph, store, _record = _setup(tmp_path, scripted)
+    store.set_status("notes", schema_fingerprint="0" * 64)
+    scope = _scope(tmp_path, ["mcp:notes:notes_search"])
+
+    paused = _invoke(graph, scope)
+    assert "__interrupt__" in paused
+    _approve(graph)
+
+    correlated = [row for row in _audit(tmp_path) if row["decision"] == "rejected" and row["actor"] == "loom"]
+    assert correlated
+    assert "fingerprint mismatch" in json.loads(correlated[0]["args"])["reason"]
+    assert correlated[0]["correlation_id"] == scope.correlation_id
