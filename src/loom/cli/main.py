@@ -1,10 +1,11 @@
-"""Command line entry points: loom version, doctor, chat, routines, approvals, triage, memory, tasks, worker, stats, backup, restore, eval."""
+"""Command line entry points: loom version, doctor, chat, routines, approvals, triage, memory, tasks, worker, stats, backup, restore, eval, mcp."""
 
 import argparse
 import imaplib
 import json
 import logging
 import os
+import shlex
 import socket
 import sqlite3
 import sys
@@ -24,6 +25,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 import loom
+from loom.audit.log import AuditLog
 from loom.core.config import ConfigError, Settings, get_settings
 from loom.core.logging import set_run_id, setup_logging
 from loom.core.runner import resolve_pending, run_routine, run_triage
@@ -43,6 +45,7 @@ from loom.ops.eval import format_result, format_summary, load_cases, run_case, r
 from loom.ops.routines import Routine, RoutineStore
 from loom.tasks import TaskStatus, TaskStore
 from loom.tools.calendar import HttpCalendarTransport, redact_url
+from loom.tools.mcp import McpError, McpServerStore, register_server, review_server
 from loom.tools.registry import build_mail_transport
 
 logger = logging.getLogger("loom")
@@ -728,6 +731,110 @@ def _eval(args: argparse.Namespace) -> int:
     return 0 if summary.rate >= 0.8 and summary.canary_ok else 1
 
 
+def _parse_mcp_command(text: str) -> "list[str]":
+    """A JSON array of argv strings, or a shell-ish command line split the simple way."""
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return shlex.split(text)
+    if not isinstance(parsed, list) or not all(isinstance(part, str) for part in parsed):
+        raise McpError("--command must be a JSON array of strings or a shell-ish command line")
+    return parsed
+
+
+def _mcp_register(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    store = McpServerStore(settings.loom_data_dir)
+    try:
+        command = _parse_mcp_command(args.mcp_command_line)
+        allowed = [name.strip() for name in args.allow.split(",") if name.strip()]
+        if not allowed:
+            raise McpError("--allow must name at least one tool, comma-separated")
+        duplicate = any(record.server_id == args.id for record in store.list())
+        record = register_server(
+            store,
+            server_id=args.id,
+            name=args.name,
+            command=command,
+            allowed_tools=allowed,
+            credential_env=args.credential_env,
+            force=args.force,
+        )
+    except (McpError, OSError) as exc:
+        print(f"error: {exc}")
+        return 1
+    AuditLog(settings.loom_data_dir).append(
+        run_id="",
+        actor="mcp-cli",
+        tool="mcp.register",
+        args={"server_id": record.server_id, "fingerprint": record.schema_fingerprint[:12], "force": args.force},
+        decision="reregistered" if duplicate else "registered",
+    )
+    print(f"registered mcp server {record.server_id}: fingerprint {record.schema_fingerprint[:12]}")
+    print(f"allowed tools: {', '.join(sorted(record.allowed_tools))}")
+    if record.credential_env:
+        print(f"credential: env var {record.credential_env} (the value is never stored)")
+    if record.needs_review:
+        print(f"frozen pending review; run `loom mcp review {record.server_id}` before its tools resolve")
+    return 0
+
+
+def _mcp_list(args: argparse.Namespace) -> int:
+    records = McpServerStore(get_settings().loom_data_dir).list()
+    if not records:
+        print("(none)")
+        return 0
+    for record in records:
+        print(
+            f"{record.server_id}  name={record.name}  enabled={str(record.enabled).lower()}"
+            f"  needs_review={str(record.needs_review).lower()}  fingerprint={record.schema_fingerprint[:12]}"
+            f"  allowed={','.join(sorted(record.allowed_tools))}"
+            f"  credential_env={record.credential_env or '-'}"
+        )
+    return 0
+
+
+def _mcp_revoke(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    store = McpServerStore(settings.loom_data_dir)
+    try:
+        record = store.set_status(args.id, enabled=False)
+    except KeyError as exc:
+        print(f"error: {exc.args[0]}")
+        return 1
+    AuditLog(settings.loom_data_dir).append(
+        run_id="",
+        actor="mcp-cli",
+        tool="mcp.revoke",
+        args={"server_id": record.server_id},
+        decision="revoked",
+    )
+    print(f"revoked {record.server_id}: enabled={str(record.enabled).lower()}")
+    return 0
+
+
+def _mcp_review(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    store = McpServerStore(settings.loom_data_dir)
+    try:
+        record = review_server(store, args.id)
+    except KeyError as exc:
+        print(f"error: {exc.args[0]}")
+        return 1
+    except (McpError, OSError) as exc:
+        print(f"error: {exc}")
+        return 1
+    AuditLog(settings.loom_data_dir).append(
+        run_id="",
+        actor="mcp-cli",
+        tool="mcp.review",
+        args={"server_id": record.server_id, "fingerprint": record.schema_fingerprint[:12]},
+        decision="reviewed",
+    )
+    print(f"reviewed {record.server_id}: fingerprint {record.schema_fingerprint[:12]}, needs_review={str(record.needs_review).lower()}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="loom", description="Loom personal agent CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -820,6 +927,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_parser.add_argument(
         "name", nargs="?", help="Run only the case with this name; its own verdict sets the exit code."
     )
+    mcp_parser = subparsers.add_parser("mcp", help="Register and manage MCP servers under the same gates.")
+    mcp_sub = mcp_parser.add_subparsers(dest="mcp_command", required=True)
+    mcp_register_parser = mcp_sub.add_parser(
+        "register",
+        help="Probe the server once, store its schema fingerprint, and record the allowed tool subset.",
+    )
+    mcp_register_parser.add_argument("--id", required=True, help="Unique server id used in mcp:<id>:<tool> action names.")
+    mcp_register_parser.add_argument("--name", required=True, help="Human-readable display name.")
+    mcp_register_parser.add_argument(
+        "--command",
+        dest="mcp_command_line",
+        required=True,
+        help='How to start the stdio server: a JSON argv array (\'["python", "server.py"]\') or a shell-ish string.',
+    )
+    mcp_register_parser.add_argument(
+        "--allow", required=True, help="Comma-separated tool names the server may be called through."
+    )
+    mcp_register_parser.add_argument(
+        "--credential-env",
+        default="",
+        help="NAME of the env var holding the server's credential; the value is never stored.",
+    )
+    mcp_register_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing registration; the new record stays frozen until `loom mcp review`.",
+    )
+    mcp_sub.add_parser("list", help="List registered MCP servers.")
+    mcp_revoke_parser = mcp_sub.add_parser("revoke", help="Disable one server: its tools stop resolving at call time.")
+    mcp_revoke_parser.add_argument("id")
+    mcp_review_parser = mcp_sub.add_parser(
+        "review", help="Re-probe one frozen server, refresh its fingerprint, and clear the freeze."
+    )
+    mcp_review_parser.add_argument("id")
     args = parser.parse_args(argv)
 
     if args.command == "version":
@@ -879,6 +1020,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         command = _restore
     elif args.command == "eval":
         command = _eval
+    elif args.command == "mcp":
+        command = {
+            "register": _mcp_register,
+            "list": _mcp_list,
+            "revoke": _mcp_revoke,
+            "review": _mcp_review,
+        }[args.mcp_command]
     else:
         return _doctor()
 
