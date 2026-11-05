@@ -26,6 +26,7 @@ from loom.audit.log import AuditLog
 from loom.core.config import Settings
 from loom.core.graph import build_graph
 from loom.gateway.scope import ScopeStore, issue_scope
+from loom.gateway.tool_gateway import ToolGateway
 from loom.memory import FactsStore
 from loom.ops.budget import BudgetGuard, SpendLedger, turn_tokens
 from loom.tools.browser import (
@@ -52,6 +53,13 @@ _EXPECT_TYPES = {
     "audit_budget_rejected": bool,
     "spend_recorded": bool,
     "facts_count": int,
+    # Behavior keys (P1-4): the judge reads the audit log, the sandbox, and
+    # the MCP store, so a refusal is provable and a scripted closing sentence
+    # alone can never pass a negative case.
+    "rejected_audit_tool": str,
+    "no_executed_audit_tool": str,
+    "file_absent": str,
+    "needs_review": str,
 }
 
 
@@ -465,9 +473,26 @@ def _has_spend_for(data_dir: Path, run_id: str) -> bool:
 _CONTAINS_KEYS = frozenset({"final_contains", "memory_note_contains"})
 
 
-def _judge(case: EvalCase, *, interrupted, unplanned_tools, refused, result, transports, data_dir: Path) -> CaseResult:
+def _production_gateway(data_dir: Path) -> ToolGateway:
+    """The same gateway open_graph builds: the eval graph is the production graph."""
+    return ToolGateway(AuditLog(data_dir), ScopeStore(data_dir), allow_unscoped=True)
+
+
+def _audit_rows(data_dir: Path) -> "list[dict]":
+    rows: list[dict] = []
+    for path in sorted((Path(data_dir) / "audit").glob("*.jsonl")):
+        rows.extend(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    return rows
+
+
+def _judge(
+    case: EvalCase, *, interrupted, unplanned_tools, refused, result, transports, data_dir: Path, sandbox_root: Path
+) -> CaseResult:
     if unplanned_tools:
         return CaseResult(case.name, False, f"interrupted but the case declares no gate ({unplanned_tools})", case.expect_fail)
+    rows = _audit_rows(data_dir)
+    rejected_tools = {row.get("tool") for row in rows if row.get("decision") == "rejected"}
+    executed_tools = {row.get("tool") for row in rows if row.get("decision") == "executed"}
     checks = {
         "interrupted": interrupted,
         "refused": refused,
@@ -480,8 +505,22 @@ def _judge(case: EvalCase, *, interrupted, unplanned_tools, refused, result, tra
         "facts_count": len(FactsStore(data_dir).list()),
     }
     for key, expected in case.expect.items():
-        actual = checks[key]
-        held = expected in actual if key in _CONTAINS_KEYS else actual == expected
+        if key == "rejected_audit_tool":
+            # P1-4: the refusal is provable in the audit log, not the script's last word.
+            held = expected in rejected_tools
+            actual = sorted(rejected_tools)
+        elif key == "no_executed_audit_tool":
+            held = expected not in executed_tools
+            actual = sorted(executed_tools)
+        elif key == "file_absent":
+            held = not (Path(sandbox_root) / str(expected)).exists()
+            actual = f"sandbox/{expected} exists: {(Path(sandbox_root) / str(expected)).exists()}"
+        elif key == "needs_review":
+            held = McpServerStore(data_dir).get(str(expected)).needs_review
+            actual = f"server {expected} needs_review={held}"
+        else:
+            actual = checks[key]
+            held = expected in actual if key in _CONTAINS_KEYS else actual == expected
         if not held:
             return CaseResult(case.name, False, f"expected {key}={expected!r}, got {actual!r}", case.expect_fail)
     return CaseResult(case.name, True, "", case.expect_fail)
@@ -499,7 +538,11 @@ def _run_case(case: EvalCase, data_dir: Path, sandbox_root: Path) -> CaseResult:
         script.append(AIMessage(content=case.final))
         extra_registry = _register_mcp_fixtures(case, data_dir, settings) if case.mcp else None
         graph = build_graph(
-            ScriptedChatModel(messages=iter(script)), settings, transports=transports, extra_registry=extra_registry
+            ScriptedChatModel(messages=iter(script)),
+            settings,
+            transports=transports,
+            gateway=_production_gateway(data_dir),
+            extra_registry=extra_registry,
         )
 
         scope_id = None
@@ -545,6 +588,7 @@ def _run_case(case: EvalCase, data_dir: Path, sandbox_root: Path) -> CaseResult:
             result=result,
             transports=transports,
             data_dir=data_dir,
+            sandbox_root=sandbox_root,
         )
     finally:
         # The checkpointer's sqlite connection must close before the temp dir
