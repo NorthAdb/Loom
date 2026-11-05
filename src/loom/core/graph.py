@@ -27,6 +27,7 @@ from loom.memory.episodic import EpisodicStore
 from loom.ops.checkpoints import make_checkpointer
 from loom.tools import APPROVAL_SIZE_LIMIT, ToolSpec, make_tools
 from loom.tools.mcp import McpError
+from loom.tools.mcp.bridge import canonical_action_name
 
 logger = logging.getLogger("loom")
 
@@ -159,26 +160,44 @@ def build_graph(
         last = state["messages"][-1]
         return list(getattr(last, "tool_calls", None) or [])
 
+    def _canonical(name: str) -> "str | None":
+        """The registry key a model-proposed tool name resolves to.
+
+        Native names pass through; the mapped mcp_ binding form maps back to
+        its one canonical mcp:<server_id>:<tool> key. None when unknown.
+        """
+        return canonical_action_name(name, registry)
+
+    def _is_mcp_shaped(name: str) -> bool:
+        return name.startswith(("mcp:", "mcp_"))
+
     def route_after_agent(state: GraphState) -> str:
         calls = _last_tool_calls(state)
         if not calls:
             return "post_turn"
-        if any(spec.side_effect for call in calls if (spec := registry.get(call["name"]))):
-            return "gate"
+        for call in calls:
+            canonical = _canonical(call["name"])
+            spec = registry.get(canonical) if canonical else None
+            if spec is not None and spec.side_effect:
+                return "gate"
         return "tools"
 
     def gate(state: GraphState) -> dict:
-        calls = [c for c in _last_tool_calls(state) if (spec := registry.get(c["name"])) and spec.side_effect]
         proposals = []
-        for c in calls:
-            spec = registry[c["name"]]
+        for c in _last_tool_calls(state):
+            canonical = _canonical(c["name"])
+            spec = registry.get(canonical) if canonical else None
+            if spec is None or not spec.side_effect:
+                continue
             context = spec.approval_context() if spec.approval_context else {}
             # The approval context is merged over the model's args: the
-            # transport's view of the world is what the human must see.
-            proposals.append((c, {**c["args"], **context}))
+            # transport's view of the world is what the human must see. The
+            # canonical action name is what the scope, the audit, and the
+            # payload all use.
+            proposals.append((c, {**c["args"], **context}, canonical))
         refused = []
-        for c, args in proposals:
-            hit = _refusal_before_approval(c["name"], args, registry[c["name"]].approval_context is not None)
+        for c, args, canonical in proposals:
+            hit = _refusal_before_approval(canonical, args, registry[canonical].approval_context is not None)
             if hit is None and len(summarize_args(args, cap=None)) > _APPROVAL_SIZE_LIMIT:
                 # What the human sees is what will run: a payload too large to
                 # show in full is refused before any human reads it, never
@@ -191,19 +210,19 @@ def build_graph(
                     {"reason": "approval payload exceeds the size limit"},
                 )
             if hit:
-                refused.append((c, *hit))
+                refused.append((c, hit[0], canonical, hit[1]))
         if refused:
-            for c, _, reason in refused:
+            for c, _, canonical, reason in refused:
                 audit.append(
                     run_id=state.get("run_id", ""),
                     actor="loom",
-                    tool=c["name"],
+                    tool=canonical,
                     args=reason,
                     decision="rejected",
                 )
-            c, line, _ = refused[0]
+            c, line, canonical, _ = refused[0]
             payload = {
-                "tools": [{"name": c["name"], "args": summarize_args(c["args"])}],
+                "tools": [{"name": canonical, "args": summarize_args(c["args"])}],
                 "refusal": line,
             }
             return {"approval_status": "rejected", "pending_action": payload}
@@ -213,21 +232,21 @@ def build_graph(
         correlation_by_name: dict[str, str | None] = {}
         if gateway is not None:
             verdicts = {
-                call["name"]: gateway.check(
+                canonical: gateway.check(
                     state.get("scope_id"),
-                    call["name"],
+                    canonical,
                     side_effect=True,
                     run_id=state.get("run_id", ""),
-                    memory_write=registry[call["name"]].memory_write,
+                    memory_write=registry[canonical].memory_write,
                 )
-                for call in calls
+                for _, _, canonical in proposals
             }
-            blocked = [(call, verdicts[call["name"]]) for call in calls if not verdicts[call["name"]].allowed]
+            blocked = [(canonical, verdicts[canonical]) for _, _, canonical in proposals if not verdicts[canonical].allowed]
             if blocked:
-                c, verdict = blocked[0]
+                canonical, verdict = blocked[0]
                 payload = {
-                    "tools": [{"name": c["name"], "args": summarize_args(c["args"])}],
-                    "refusal": f"Gateway refused {c['name']}: {verdict.reason}",
+                    "tools": [{"name": canonical, "args": verdict.reason}],
+                    "refusal": f"Gateway refused {canonical}: {verdict.reason}",
                 }
                 return {"approval_status": "rejected", "pending_action": payload}
             correlation_by_name = {
@@ -235,21 +254,21 @@ def build_graph(
             }
         payload = {
             "tools": [
-                {"name": c["name"], "args": summarize_args(args, cap=None)}
-                for c, args in proposals
+                {"name": canonical, "args": summarize_args(args, cap=None)}
+                for c, args, canonical in proposals
             ],
             "reason": "These tools change state and need human approval.",
         }
         resume = interrupt(payload)
         status = "approved" if resume["decision"] == "approve" else "rejected"
-        for c, args in proposals:
+        for c, args, canonical in proposals:
             audit.append(
                 run_id=state.get("run_id", ""),
                 actor="human",
-                tool=c["name"],
+                tool=canonical,
                 args=args,
                 decision=status,
-                correlation_id=correlation_by_name.get(c["name"]),
+                correlation_id=correlation_by_name.get(canonical),
             )
         return {"approval_status": status, "pending_action": payload}
 
@@ -259,9 +278,50 @@ def build_graph(
     def run_tools(state: GraphState) -> dict:
         messages: list[ToolMessage] = []
         for call in _last_tool_calls(state):
-            spec = registry.get(call["name"])
+            canonical = _canonical(call["name"])
+            spec = registry.get(canonical) if canonical else None
             if spec is None:
-                messages.append(ToolMessage(content=f"error: unknown tool {call['name']}", tool_call_id=call["id"]))
+                if _is_mcp_shaped(call["name"]):
+                    # An MCP-shaped proposal with no registered spec is ruled
+                    # on and audited, never a silent unknown: the gateway
+                    # refuses names outside the scope (correlated row), and a
+                    # name the scope somehow allows but nothing registers gets
+                    # its own correlated rejected row here.
+                    verdict = None
+                    if gateway is not None:
+                        verdict = gateway.check(
+                            state.get("scope_id"),
+                            call["name"],
+                            side_effect=True,
+                            run_id=state.get("run_id", ""),
+                        )
+                    if verdict is not None and not verdict.allowed:
+                        messages.append(
+                            ToolMessage(
+                                content=f"error: gateway refused {call['name']}: {verdict.reason}",
+                                tool_call_id=call["id"],
+                            )
+                        )
+                        continue
+                    correlation = verdict.scope.correlation_id if verdict is not None and verdict.scope else None
+                    try:
+                        audit.append(
+                            run_id=state.get("run_id", ""),
+                            actor="gateway",
+                            tool=call["name"],
+                            args={"reason": "no such registered mcp tool"},
+                            decision="rejected",
+                            correlation_id=correlation,
+                        )
+                    except (OSError, ValueError, TypeError) as exc:
+                        logger.warning(
+                            "the unregistered-mcp refusal could not be audited", extra={"error": str(exc)}
+                        )
+                    messages.append(
+                        ToolMessage(content=f"error: unregistered mcp tool {call['name']}", tool_call_id=call["id"])
+                    )
+                else:
+                    messages.append(ToolMessage(content=f"error: unknown tool {call['name']}", tool_call_id=call["id"]))
                 continue
             # Same merge as the gate, so the audit records what was approved,
             # not what the model claimed; read before the invoke, before the
@@ -274,7 +334,7 @@ def build_graph(
                 # scope expired or the store changed) still cannot execute.
                 verdict = gateway.check(
                     state.get("scope_id"),
-                    call["name"],
+                    canonical,
                     side_effect=spec.side_effect,
                     run_id=state.get("run_id", ""),
                     memory_write=spec.memory_write,
@@ -282,7 +342,7 @@ def build_graph(
                 if not verdict.allowed:
                     messages.append(
                         ToolMessage(
-                            content=f"error: gateway refused {call['name']}: {verdict.reason}", tool_call_id=call["id"]
+                            content=f"error: gateway refused {canonical}: {verdict.reason}", tool_call_id=call["id"]
                         )
                     )
                     continue
@@ -301,7 +361,7 @@ def build_graph(
                     audit.append(
                         run_id=state.get("run_id", ""),
                         actor="loom",
-                        tool=call["name"],
+                        tool=canonical,
                         args=audited if decision == "failed" else {**audited, "reason": str(exc)[:200]},
                         decision=decision,
                         correlation_id=correlation_id,
@@ -311,7 +371,7 @@ def build_graph(
                 audit.append(
                     run_id=state.get("run_id", ""),
                     actor="loom",
-                    tool=call["name"],
+                    tool=canonical,
                     args=audited,
                     decision="executed",
                     correlation_id=correlation_id,

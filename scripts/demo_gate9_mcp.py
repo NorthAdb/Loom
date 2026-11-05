@@ -91,6 +91,18 @@ class Seams:
         self.scopes.add(scope)
         return scope
 
+    def bound_name(self, canonical: str) -> str:
+        """The model-facing name for one registry key, proven to map back."""
+        from loom.tools.mcp.bridge import canonical_action_name, model_action_name
+
+        registry = build_mcp_registry(self.settings)
+        if canonical not in registry:
+            raise SystemExit(f"the demo registry does not hold {canonical}")
+        bound = model_action_name(canonical)
+        if canonical_action_name(bound, registry) != canonical:
+            raise SystemExit(f"the bound name {bound} does not map back to {canonical}")
+        return bound
+
     def invoke(self, graph, config, scope, text):
         return graph.invoke(
             {
@@ -152,10 +164,13 @@ def scenario_a(seams: Seams) -> None:
 
 
 def scenario_b(seams: Seams) -> None:
-    line("(b) approved call: mcp:notes:notes_search through the gateway, the gate, and the bridge")
+    # The model proposes the BOUND name (what bind_tools advertises); the
+    # graph maps it back to the canonical registry key mcp:notes:notes_search.
+    bound = seams.bound_name("mcp:notes:notes_search")
+    line(f"(b) approved call: the model proposes the bound name {bound}")
     graph, config = seams.graph(
         [
-            tool_call_msg("mcp:notes:notes_search", {"query": "heating bill"}, "c1"),
+            tool_call_msg(bound, {"query": "heating bill"}, "c1"),
             AIMessage(content="I found your note; the text is data only."),
         ],
         thread_id="demo-gate9-b",

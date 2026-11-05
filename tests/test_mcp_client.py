@@ -50,13 +50,19 @@ def test_call_tool_returns_the_text_as_data():
     assert count == "4"
 
 
-def test_a_schema_variant_changes_the_fingerprint(monkeypatch):
+def test_a_schema_variant_changes_the_fingerprint():
     with McpClient(_server("notes"), timeout=15) as client:
         client.initialize()
         base = schema_fingerprint(client.list_tools())
 
-    monkeypatch.setenv("SCHEMA_VARIANT", "2")
-    with McpClient(_server("notes"), timeout=15) as client:
+    # The variant reaches the child through the registered command, not the
+    # environment: the child env is the minimal allowlist by design.
+    wrapper = [
+        sys.executable,
+        "-c",
+        f"import os, runpy; os.environ['SCHEMA_VARIANT'] = '2'; runpy.run_path(r'{_server('notes')[1]}', run_name='__main__')",
+    ]
+    with McpClient(wrapper, timeout=15) as client:
         client.initialize()
         variant = schema_fingerprint(client.list_tools())
 
@@ -95,12 +101,18 @@ def test_a_stopped_client_refuses_to_send():
 
 
 def test_the_credential_env_handle_reaches_the_child_and_stays_out_of_the_registry(monkeypatch, tmp_path):
-    monkeypatch.setenv("LOOM_TEST_MCP_SECRET", "dummy-credential-value")
-    with McpClient(_server("notes"), credential_env="LOOM_TEST_MCP_SECRET", timeout=15) as client:
+    """P0-3: the child sees its ONE credential variable and nothing else secret."""
+    monkeypatch.setenv("LOOM_NOTES_TOKEN", "dummy-credential-value")
+    monkeypatch.setenv("LOOM_MAIL_PASSWORD", "PROBE_FAKE_MAIL_PASSWORD")
+    monkeypatch.setenv("PROBE_OTHER_SERVER_SECRET", "PROBE_FAKE_OTHER_SECRET")
+    with McpClient(_server("env"), credential_env="LOOM_NOTES_TOKEN", timeout=15) as client:
         client.initialize()
-        result = client.call_tool("notes_search", {"query": "x"})
+        keys = client.call_tool("dump_env", {})
 
-    assert "credential-handle echo: dummy-credential-value" in result
+    assert "LOOM_NOTES_TOKEN" in keys.split(",")  # the handle is forwarded
+    assert "LOOM_MAIL_PASSWORD" not in keys.split(",")  # no other server's or app secret leaks
+    assert "PROBE_OTHER_SERVER_SECRET" not in keys.split(",")
+    assert "LLM_API_KEY" not in keys.split(",")
 
     record = McpServerStore(tmp_path).add(
         McpServerRecord(

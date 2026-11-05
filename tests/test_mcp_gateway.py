@@ -118,9 +118,14 @@ def test_1_an_unregistered_server_is_an_unknown_tool_and_spawns_nothing(tmp_path
 
     result = _invoke(graph, scope)
 
-    assert any("unknown tool mcp:ghost:tool" in text for text in _tool_texts(result))
+    # P0-2/P1-7: an MCP-shaped proposal with no registered spec is audited,
+    # never a silent unknown.
+    assert any("unregistered mcp tool mcp:ghost:tool" in text for text in _tool_texts(result))
     executed = [row for row in _audit(tmp_path) if row["decision"] == "executed"]
     assert executed == []
+    rejected = [row for row in _audit(tmp_path) if row["decision"] == "rejected"]
+    assert rejected and rejected[0]["tool"] == "mcp:ghost:tool"
+    assert rejected[0]["correlation_id"] == scope.correlation_id
 
 
 def test_2_a_tool_outside_the_allowed_subset_is_not_in_the_registry_and_the_bridge_refuses_directly(tmp_path):
@@ -129,12 +134,16 @@ def test_2_a_tool_outside_the_allowed_subset_is_not_in_the_registry_and_the_brid
     scope = _scope(tmp_path, ["mcp:notes:notes_search"])
 
     # The model proposes mcp:notes:notes_count; only allowed tools get specs, so
-    # the graph-level path is the unknown-tool error and nothing executes.
+    # the graph-level path is the gateway's correlated refusal and nothing executes.
     result = _invoke(graph, scope, run_id="graph-run")
 
-    assert any("unknown tool mcp:notes:notes_count" in text for text in _tool_texts(result))
+    assert any("gateway refused mcp:notes:notes_count" in text for text in _tool_texts(result))
     executed = [row for row in _audit(tmp_path) if row["decision"] == "executed"]
     assert executed == []
+    graph_rejected = [
+        row for row in _audit(tmp_path) if row["decision"] == "rejected" and row["tool"] == "mcp:notes:notes_count"
+    ]
+    assert graph_rejected and graph_rejected[0]["correlation_id"] == scope.correlation_id
 
     # Unit level: a directly built spec for the unallowed tool refuses and audits the refusal.
     spec = mcp_tool_spec(record, "notes_count", settings)
@@ -161,7 +170,7 @@ def test_3_a_tampered_fingerprint_freezes_the_server_until_review(tmp_path):
     assert rejected and "fingerprint mismatch" in rejected[0]["args"]
 
     # The human re-reviews; the freeze clears and the same call goes green.
-    review_server(store, "notes")
+    review_server(store, "notes")  # returns (record, diff); the diff is pinned in test_mcp_cli
     assert store.get("notes").needs_review is False
     again = build_graph(
         ScriptedChatModel(

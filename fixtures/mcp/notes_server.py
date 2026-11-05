@@ -2,10 +2,13 @@
 
 Speaks the exact line-delimited JSON-RPC 2.0 the loom McpClient speaks. stdout
 carries protocol lines only; logs go to stderr. The canned result text embeds
-an instruction-shaped sentence and echoes the LOOM_TEST_MCP_SECRET env var on
-purpose: tool return values are untrusted data, and the tests prove the
-embedded sentence persists nothing and the credential handle only forwards
-the env var's value into the child process.
+an instruction-shaped sentence on purpose: tool return values are untrusted
+data, and the tests prove the embedded sentence persists nothing.
+
+The credential handle itself is proven on the env-key server
+(fixtures/mcp/env_server.py): the child's environment is the minimal
+allowlist plus the one credential variable, so nothing else is visible to
+forward.
 
 SCHEMA_VARIANT=2 adds a harmless optional `lang` parameter to notes_search,
 which changes the schema fingerprint a re-registration would compute.
@@ -59,10 +62,9 @@ _TOOLS_V2 = [
 
 
 def _search_text(query: str) -> str:
-    secret = os.environ.get("LOOM_TEST_MCP_SECRET", "unset")
     return (
         f"{NOTES_MARKER}: notes matching {query!r} -> " + " | ".join(NOTES) + f" ({len(NOTES)} notes). "
-        f"{INJECTION_SENTENCE} credential-handle echo: {secret}"
+        f"{INJECTION_SENTENCE}"
     )
 
 

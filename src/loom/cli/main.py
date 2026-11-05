@@ -268,10 +268,10 @@ def chat_session(graph, thread_id: str, read: Callable[[str], str], emit: Callab
             budget.record("chat", run_id, turn_tokens(result["messages"]))
 
 
-def _chat(thread_id: str | None, read: Callable[[str], str] = input, emit: Callable[[str], None] = print) -> int:
+def _chat(thread_id: str | None, read: Callable[[str], str] = input, emit: Callable[[str], None] = print, *, mcp: bool = False) -> int:
     settings = get_settings()
     setup_logging(settings)
-    with open_graph(settings) as graph:
+    with open_graph(settings, mcp=mcp) as graph:
         session_id = thread_id or uuid.uuid4().hex
         emit(f"thread {session_id}")
         emit("type a message; side-effect tools pause for approve/reject; 'quit' exits")
@@ -817,7 +817,7 @@ def _mcp_review(args: argparse.Namespace) -> int:
     settings = get_settings()
     store = McpServerStore(settings.loom_data_dir)
     try:
-        record = review_server(store, args.id)
+        record, diff = review_server(store, args.id)
     except KeyError as exc:
         print(f"error: {exc.args[0]}")
         return 1
@@ -828,10 +828,22 @@ def _mcp_review(args: argparse.Namespace) -> int:
         run_id="",
         actor="mcp-cli",
         tool="mcp.review",
-        args={"server_id": record.server_id, "fingerprint": record.schema_fingerprint[:12]},
+        args={
+            "server_id": record.server_id,
+            "old_fingerprint": diff["old_fingerprint"][:12],
+            "new_fingerprint": diff["new_fingerprint"][:12],
+            "added": diff["added"],
+            "removed": diff["removed"],
+        },
         decision="reviewed",
     )
-    print(f"reviewed {record.server_id}: fingerprint {record.schema_fingerprint[:12]}, needs_review={str(record.needs_review).lower()}")
+    print(f"reviewed {record.server_id}: needs_review={str(record.needs_review).lower()}")
+    print(f"  old fingerprint: {diff['old_fingerprint'][:12]}")
+    print(f"  new fingerprint: {diff['new_fingerprint'][:12]}")
+    print(f"  server now lists: {', '.join(diff['listed']) or '(none)'}")
+    print(f"  added since registration: {', '.join(diff['added']) or '(none)'}")
+    print(f"  removed since registration: {', '.join(diff['removed']) or '(none)'}")
+    print("  (the allowed subset only changes through a --force re-registration)")
     return 0
 
 
@@ -842,6 +854,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers.add_parser("doctor", help="Check the local environment.")
     chat_parser = subparsers.add_parser("chat", help="Chat with the agent.")
     chat_parser.add_argument("--thread-id", help="Resume an existing thread from its checkpoint.")
+    chat_parser.add_argument(
+        "--mcp",
+        action="store_true",
+        help="Expose registered MCP servers' tools to this chat (ADR-020); off by default.",
+    )
 
     routines_parser = subparsers.add_parser("routines", help="Manage scheduled routines.")
     routines_sub = routines_parser.add_subparsers(dest="routines_command", required=True)
@@ -968,7 +985,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "chat":
         try:
-            return _chat(args.thread_id)
+            return _chat(args.thread_id, mcp=args.mcp)
         except ConfigError as exc:
             print(f"config error: {exc}")
             return 1

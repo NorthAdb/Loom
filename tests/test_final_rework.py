@@ -6,6 +6,9 @@ item is a named test instead of a claim.
 """
 
 import json
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
 
 from conftest import ScriptedChatModel, read_audit, tool_call_msg
 from langchain_core.messages import AIMessage
@@ -151,3 +154,177 @@ def test_P1_2_an_overlong_payload_is_refused_before_any_human_sees_it(tmp_path):
     assert not (tmp_path / "sandbox" / "big.txt").exists()
     refusals = [row for row in read_audit(tmp_path) if row["decision"] == "rejected"]
     assert refusals and json.loads(refusals[0]["args"])["reason"] == "approval payload exceeds the size limit"
+
+
+def test_P0_2_the_model_facing_name_hits_the_registry_end_to_end(tmp_path):
+    """The bound name the model sees IS the name the graph resolves; the audit records the canonical key."""
+    import sys
+
+    from loom.tools.mcp import McpServerStore, build_mcp_registry, register_server
+    from loom.tools.mcp.bridge import canonical_action_name, model_action_name
+
+    server = REPO / "fixtures" / "mcp" / "notes_server.py"
+    store = McpServerStore(tmp_path)
+    record = register_server(
+        store,
+        server_id="notes",
+        name="Notes",
+        command=[sys.executable, str(server)],
+        allowed_tools=["notes_search"],
+    )
+    assert record.needs_review is False
+    registry = build_mcp_registry(settings := Settings(
+        loom_env="dev", loom_data_dir=tmp_path, loom_sandbox_root=tmp_path / "sandbox"
+    ))
+    canonical = "mcp:notes:notes_search"
+    bound = model_action_name(canonical)
+    assert registry[canonical].func.name == bound  # what bind_tools advertises
+    assert canonical_action_name(bound, registry) == canonical  # the reverse hits the key
+
+    scope = issue_scope("owner", "eval", "mcp", [canonical], ttl_seconds=None)
+    ScopeStore(tmp_path).add(scope)
+    graph = build_graph(
+        ScriptedChatModel(
+            messages=iter([
+                tool_call_msg(bound, {"query": "heating"}, "c1"),
+                AIMessage(content="Notes found."),
+            ])
+        ),
+        settings,
+        memory=FakeSemantic(),
+        gateway=ToolGateway(AuditLog(tmp_path), ScopeStore(tmp_path)),
+        extra_registry=registry,
+    )
+    paused = graph.invoke(
+        {"messages": [{"role": "user", "content": "search"}], "run_id": "n1", "scope_id": scope.scope_id},
+        {"configurable": {"thread_id": "n1"}},
+    )
+    assert "__interrupt__" in paused  # the proposal reached the gate under its canonical name
+    done = graph.invoke(Command(resume={"decision": "approve"}), {"configurable": {"thread_id": "n1"}})
+    texts = [getattr(m, "content", "") for m in done["messages"]]
+    assert any("LOOM-MCP-NOTES-MARKER" in str(text) for text in texts)
+    rows = read_audit(tmp_path)
+    assert any(row["tool"] == canonical and row["decision"] == "executed" for row in rows)
+
+
+def test_P0_2_chat_gains_mcp_only_through_the_explicit_flag(monkeypatch, tmp_path, capsys):
+    """The chat entrypoint runs MCP-free by default and merges registered tools only with --mcp."""
+    import sys
+
+    import loom.cli.main  # ensures sys.modules has the real module
+    import loom.core.runtime
+    from loom.tools.mcp import McpServerStore, register_server
+
+    server = REPO / "fixtures" / "mcp" / "notes_server.py"
+    register_server(
+        McpServerStore(tmp_path),
+        server_id="notes",
+        name="Notes",
+        command=[sys.executable, str(server)],
+        allowed_tools=["notes_search"],
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LOOM_ENV", "dev")
+    monkeypatch.setenv("LOOM_DATA_DIR", str(tmp_path))
+    captured = {}
+
+    class Recording:
+        def __init__(self):
+            self.bound_names = []
+
+        def bind_tools(self, tools, **kwargs):
+            self.bound_names = [getattr(tool, "name", None) for tool in tools]
+            return self
+
+        def invoke(self, messages):
+            return AIMessage(content="hello there")
+
+    recording = Recording()
+
+    def fake_make_model(settings):
+        return recording
+
+    def fake_chat_session(graph, thread_id, read, emit, *, budget=None):
+        captured["names"] = list(recording.bound_names)
+
+    monkeypatch.setattr(loom.core.runtime, "make_model", fake_make_model)
+    cli_module = sys.modules["loom.cli.main"]  # the package __init__ re-exports `main`, shadowing the module
+    monkeypatch.setattr(cli_module, "chat_session", fake_chat_session)
+
+    assert cli_module.main(["chat"]) == 0, capsys.readouterr().out
+    assert not any(name and name.startswith("mcp_") for name in captured["names"])  # off by default
+    assert cli_module.main(["chat", "--mcp"]) == 0, capsys.readouterr().out
+    assert "mcp_notes_notes_search" in captured["names"]  # the flag merged the registered server
+
+
+def test_P0_3_the_return_value_never_carries_a_known_credential_into_the_model_or_a_backup(tmp_path, monkeypatch):
+    """Scrubbing happens before the text reaches the model, so checkpoints and backups hold no secret."""
+    import sys
+    import zipfile
+
+    from loom.ops.backup import create_backup
+    from loom.tools.mcp import McpServerStore, build_mcp_registry, register_server
+
+    secret = "dummy-credential-value-9f2b"
+    server = REPO / "fixtures" / "mcp" / "echo_server.py"
+    store = McpServerStore(tmp_path)
+    register_server(
+        store,
+        server_id="echo",
+        name="Echo",
+        command=[sys.executable, str(server)],
+        allowed_tools=["reveal_token"],
+        credential_env="LOOM_ECHO_TOKEN",
+    )
+    monkeypatch.setenv("LOOM_ECHO_TOKEN", secret)
+    if True:
+        settings = Settings(loom_env="dev", loom_data_dir=tmp_path, loom_sandbox_root=tmp_path / "sandbox")
+        registry = build_mcp_registry(settings)
+        canonical = "mcp:echo:reveal_token"
+        bound = registry[canonical].func.name
+        scope = issue_scope("owner", "eval", "mcp", [canonical], ttl_seconds=None)
+        ScopeStore(tmp_path).add(scope)
+        graph = build_graph(
+            ScriptedChatModel(messages=iter([
+                tool_call_msg(bound, {}, "c1"),
+                AIMessage(content="done"),
+            ])),
+            settings,
+            memory=FakeSemantic(),
+            gateway=ToolGateway(AuditLog(tmp_path), ScopeStore(tmp_path)),
+            extra_registry=registry,
+        )
+        graph.invoke(
+            {"messages": [{"role": "user", "content": "echo"}], "run_id": "e1", "scope_id": scope.scope_id},
+            {"configurable": {"thread_id": "e1"}},
+        )
+        done = graph.invoke(Command(resume={"decision": "approve"}), {"configurable": {"thread_id": "e1"}})
+        tool_texts = [str(m.content) for m in done["messages"] if getattr(m, "type", "") == "tool"]
+        assert any("***" in text and secret not in text for text in tool_texts)
+
+        archive = create_backup(tmp_path, tmp_path / "backups")
+        blob = b"".join(
+            zipfile.ZipFile(archive).read(name) for name in zipfile.ZipFile(archive).namelist()
+        )
+        assert secret.encode() not in blob  # the checkpoint WAL holds no credential
+
+
+def test_P1_7_the_call_path_performs_the_mcp_handshake(tmp_path):
+    """A spec-conforming server that refuses pre-handshake requests works through the bridge."""
+    import sys
+
+    from loom.tools.mcp import McpServerStore, build_mcp_registry, register_server
+
+    server = REPO / "fixtures" / "mcp" / "strict_server.py"
+    settings = Settings(loom_env="dev", loom_data_dir=tmp_path, loom_sandbox_root=tmp_path / "sandbox")
+    register_server(
+        McpServerStore(tmp_path),
+        server_id="strict",
+        name="Strict",
+        command=[sys.executable, str(server)],
+        allowed_tools=["ping"],
+    )
+    registry = build_mcp_registry(settings)
+    spec = registry["mcp:strict:ping"]
+
+    assert spec.func.invoke({}) == "pong"  # list_tools initialized first; the call completes

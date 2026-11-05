@@ -25,6 +25,24 @@ _PROTOCOL_VERSION = "2024-11-05"
 _MAX_RESPONSE_CHARS = 1024 * 1024
 _ERROR_DETAIL_CAP = 500
 
+# The child process starts from this minimal set plus the one credential
+# variable: a server never sees the mail password, the LLM key, or another
+# server's token through its environment.
+_CHILD_ENV_KEYS = (
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "PYTHONUTF8",
+    "PYTHONIOENCODING",
+)
+
 
 def _client_info() -> dict:
     from loom import __version__
@@ -59,6 +77,7 @@ class McpClient:
         self._responses: queue.Queue = queue.Queue()
         self._threads: list[threading.Thread] = []
         self._ids = itertools.count(1)
+        self._initialized = False
 
     def __enter__(self) -> Self:
         self.start()
@@ -71,7 +90,7 @@ class McpClient:
     def start(self) -> None:
         if self._proc is not None:
             raise McpError("mcp client is already started")
-        env = dict(os.environ)
+        env = {key: os.environ[key] for key in _CHILD_ENV_KEYS if key in os.environ}
         if self._credential_env:
             env[self._credential_env] = os.environ.get(self._credential_env, "")
         try:
@@ -126,17 +145,26 @@ class McpClient:
         self._threads = []
 
     def initialize(self) -> dict:
-        """The MCP handshake; returns the server's initialize result."""
+        """The MCP handshake: initialize, then the initialized notification.
+
+        Every session must run this before tools/list or tools/call — the
+        register path and the call path share it, so a spec-conforming server
+        that refuses pre-handshake requests works on both.
+        """
         params = {
             "protocolVersion": _PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": _client_info(),
         }
-        return self._request("initialize", params)
+        result = self._request("initialize", params)
+        self._notify("notifications/initialized")
+        self._initialized = True
+        return result
 
     def list_tools(self) -> "list[dict]":
         """The server's advertised tool list, as-is from the tools/list result."""
-        self._notify("notifications/initialized")
+        if not self._initialized:
+            self.initialize()
         tools = self._request("tools/list", {}).get("tools")
         if not isinstance(tools, list):
             raise McpError("mcp server sent a malformed response (no tools list)")
