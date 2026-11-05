@@ -30,7 +30,7 @@ Product boundaries and the locked decisions (2026-10-30, extended 2026-11-04) li
 
 ## Architecture
 
-The LangGraph loop, the sandbox layer, the memory baseline, Request Scope, the Tool Gateway, and the Operator Console are built; real mail transport (Gate 8) and the MCP registry (Gate 9) are not. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
+The LangGraph loop, the sandbox layer, the memory baseline, Request Scope, the Tool Gateway, the mail triage path, the MCP registry, and the Operator Console are in the tree. Gate 8 awaits its ≥2-week dogfood window and Gate 9 its joint review before either claims Passed. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
 
 Built through Gate 7:
 

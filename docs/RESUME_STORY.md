@@ -14,7 +14,7 @@ The core is a LangGraph graph (`src/loom/core/graph.py`): memory note → agent 
 
 | Claim | Number | Reproduce with |
 | --- | --- | --- |
-| Test suite | 518 passed, 1 skipped with chromium installed (the real-browser tests skip on CI and other browser-less environments) | `pytest -q` |
+| Test suite | 537 passed, 1 skipped with chromium installed (the real-browser tests skip on CI and other browser-less environments) | `pytest -q` |
 | Capabilities behind the gate | 17 registered tools, side-effect flags pinned exactly | `pytest tests/test_gate3_guards.py tests/test_gate4_guards.py -q` |
 | Scope and gateway | every scoped call checked at the gate and at execution; fail closed, refusal audited, `memory_write` enforced | `pytest tests/test_tool_gateway.py tests/test_runtime_gateway.py -q` |
 | MCP lifecycle | fingerprint freeze, out-of-subset refusal, untrusted return, expired scope, audit fail-closed — the §4.7 set through the real graph | `pytest -k 'mcp or fingerprint or gate9' -q` |
