@@ -12,6 +12,7 @@ from langgraph.types import interrupt
 
 from loom.audit.log import AuditLog, summarize_args
 from loom.core.config import Settings
+from loom.gateway.scope import ScopeStore
 from loom.gateway.tool_gateway import ToolGateway
 from loom.memory import (
     FactsStore,
@@ -33,8 +34,6 @@ MEMORY_REFUSAL = (
     "Write refused: that message looks like it contains an API key or token, "
     "so nothing was saved to memory."
 )
-
-_GATE_PAYLOAD_CAP = 2000
 
 _MAIL_DRAFT_TOOLS = {"mail_create_draft", "mail_update_draft", "draft_create_local"}
 _APPROVAL_SIZE_LIMIT = APPROVAL_SIZE_LIMIT
@@ -180,6 +179,17 @@ def build_graph(
         refused = []
         for c, args in proposals:
             hit = _refusal_before_approval(c["name"], args, registry[c["name"]].approval_context is not None)
+            if hit is None and len(summarize_args(args, cap=None)) > _APPROVAL_SIZE_LIMIT:
+                # What the human sees is what will run: a payload too large to
+                # show in full is refused before any human reads it, never
+                # shown truncated and executed whole.
+                hit = (
+                    (
+                        f"Refused before approval: the payload exceeds the "
+                        f"{_APPROVAL_SIZE_LIMIT}-character approval size limit."
+                    ),
+                    {"reason": "approval payload exceeds the size limit"},
+                )
             if hit:
                 refused.append((c, *hit))
         if refused:
@@ -225,15 +235,7 @@ def build_graph(
             }
         payload = {
             "tools": [
-                {
-                    "name": c["name"],
-                    "args": summarize_args(
-                        args,
-                        cap=_APPROVAL_SIZE_LIMIT
-                        if (registry[c["name"]].approval_context or c["name"] in _MAIL_DRAFT_TOOLS)
-                        else _GATE_PAYLOAD_CAP,
-                    ),
-                }
+                {"name": c["name"], "args": summarize_args(args, cap=None)}
                 for c, args in proposals
             ],
             "reason": "These tools change state and need human approval.",
@@ -318,14 +320,33 @@ def build_graph(
 
     def post_turn(state: GraphState) -> dict:
         text = _last_human_text(state)
-        if state.get("scope_id"):
-            # Gate 7: a scoped run carries untrusted inbound as its input.
-            # Inbound content never writes memory and never reaches the
-            # episodic log, which later turns would re-inject as context.
+        if not text:
             return {}
-        if text:
-            _log_episodic_turn(settings.loom_data_dir, text)
-        if not text or not has_explicit_memory_intent(text):
+        scope_id = state.get("scope_id")
+        if scope_id:
+            # The memory write is an internal action, so it goes through the
+            # gateway's posture and leaves an audited refusal row: a scope
+            # whose memory_write is false (or one that no longer exists)
+            # writes nothing — no episodic row, no semantic entry, no facts.
+            try:
+                scope = ScopeStore(settings.loom_data_dir).get(scope_id)
+            except KeyError:
+                scope = None
+            if scope is None or not scope.memory_write:
+                try:
+                    audit.append(
+                        run_id=state.get("run_id", ""),
+                        actor="gateway",
+                        tool="memory.write",
+                        args={"scope_id": scope_id, "memory_write": scope.memory_write if scope else False},
+                        decision="rejected",
+                        correlation_id=scope.correlation_id if scope else None,
+                    )
+                except OSError as exc:
+                    logger.warning("memory-write refusal could not be audited", extra={"error": str(exc)})
+                return {}
+        _log_episodic_turn(settings.loom_data_dir, text)
+        if not has_explicit_memory_intent(text):
             return {}
         if contains_secret(text):
             logger.warning("refused to memorize message: it looks like it carries a secret")
