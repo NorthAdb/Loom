@@ -17,7 +17,12 @@ from loom.ops.routines import now_local, write_json_atomic
 
 @dataclass(frozen=True)
 class LocalDraft:
-    """One draft awaiting human review; local only, never sent."""
+    """One draft awaiting human review; local only, never sent.
+
+    `category` is the triage classification (reply/action/reading/archive,
+    empty for drafts written before Gate 8); it rides on the draft so the
+    Draft view can group the work without re-reading the message.
+    """
 
     draft_id: str
     to: str
@@ -25,6 +30,7 @@ class LocalDraft:
     body: str
     status: str  # always "local_only"; the field exists so a viewer can assert it
     created_at: str
+    category: str = ""
 
 
 class DraftStore:
@@ -43,7 +49,7 @@ class DraftStore:
     def _write(self, drafts: list[LocalDraft]) -> None:
         write_json_atomic(self._path, [asdict(draft) for draft in drafts])
 
-    def add(self, to: str, subject: str, body: str) -> LocalDraft:
+    def add(self, to: str, subject: str, body: str, category: str = "") -> LocalDraft:
         draft = LocalDraft(
             draft_id=uuid.uuid4().hex,
             to=to,
@@ -51,6 +57,7 @@ class DraftStore:
             body=body,
             status="local_only",
             created_at=now_local(),
+            category=category,
         )
         with self._lock:
             drafts = self._load()

@@ -19,6 +19,8 @@ _CALENDAR_NOT_CONFIGURED = "calendar is not configured; set LOOM_ICAL_URL in .en
 _RANGES = {"today": (0, 1, "today"), "tomorrow": (1, 2, "tomorrow"), "week": (0, 7, "the next 7 days")}
 # The largest to+subject+body an approval may show, shared with the gate.
 APPROVAL_SIZE_LIMIT = 10_000
+# The triage classification a local draft may carry; empty means unclassified.
+_DRAFT_CATEGORIES = {"", "reply", "action", "reading", "archive"}
 
 
 @dataclass(frozen=True)
@@ -254,17 +256,23 @@ def make_tools(settings: Settings, transports: dict | None = None) -> dict[str, 
         return f"submit {verdict}: {outcome.detail} ({outcome.url})"
 
     @tool
-    def draft_create_local(to: str, subject: str, body: str) -> str:
+    def draft_create_local(to: str, subject: str, body: str, category: str = "") -> str:
         """Write a local draft for human review in the data dir; it is never sent.
 
         Side effect: pauses for approval. The approval shows the full recipient,
         subject, and body. There is no send path for this draft anywhere.
+        `category` classifies the triage decision and must be one of: '',
+        'reply', 'action', 'reading', 'archive'.
         """
+        if category not in _DRAFT_CATEGORIES:
+            raise ValueError(
+                f"category must be one of: '', 'reply', 'action', 'reading', 'archive'; got {category!r}"
+            )
         if sum(len(part) for part in (to, subject, body)) > APPROVAL_SIZE_LIMIT:
             raise ValueError(
                 f"to+subject+body exceed the {APPROVAL_SIZE_LIMIT}-character limit; write a shorter draft"
             )
-        draft = drafts_store.add(to=to, subject=subject, body=body)
+        draft = drafts_store.add(to=to, subject=subject, body=body, category=category)
         return f"draft {draft.draft_id} stored locally; it has not been sent and cannot be sent"
 
     return {

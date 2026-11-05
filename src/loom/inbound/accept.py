@@ -81,7 +81,11 @@ def compose_triage_prompt(message: InboundMessage) -> str:
         f"{message.body}\n"
         ">>>>>>>\n"
         "If the message warrants a reply draft, propose draft_create_local with "
-        "the recipient, subject, and body. It will wait for human approval."
+        "the recipient, subject, body, and category. It will wait for human approval. "
+        "Classify this message into exactly one of: reply, action, reading, archive. "
+        "Pass the classification as the category argument of draft_create_local. "
+        "A category-only note is not possible: when no draft is warranted, propose "
+        "nothing and state the classification in your answer instead."
     )
 
 
