@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from loom.core.logging import is_sensitive
-from loom.core.secrets import known_secret_values, scrub_text
+from loom.core.secrets import known_secret_values, scrub_value
 
 _VALUE_CAP = 200
 
@@ -38,6 +38,12 @@ class AuditLog:
     `settings`, when supplied, contributes its mail password and LLM key to
     the scrub set; without it the set falls back to the environment those
     fields load from plus every registered server's credential.
+
+    The scrub runs on the raw args BEFORE `summarize_args` truncates string
+    values: scrubbing the summary instead would never match a secret longer
+    than the summary cap, and its first `cap` characters would be written
+    verbatim. The audit summary cap itself is unchanged, and approval
+    payloads (built by callers with `cap=None`) are not affected.
     """
 
     def __init__(self, data_dir: Path, settings: Any = None) -> None:
@@ -65,7 +71,7 @@ class AuditLog:
             "run_id": run_id,
             "actor": actor,
             "tool": tool,
-            "args": scrub_text(summarize_args(args), known_secret_values(self._settings, self._data_dir)),
+            "args": summarize_args(scrub_value(args, known_secret_values(self._settings, self._data_dir))),
             "decision": decision,
         }
         if correlation_id is not None:

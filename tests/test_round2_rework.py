@@ -152,6 +152,52 @@ def test_R2_1_audit_args_mask_a_known_secret_value_under_any_key(tmp_path):
     assert '"q"' in rows[0]["args"] and "***" in rows[0]["args"]
 
 
+LONG_SECRET = "PROBE-LONG-KEY-" + "K" * 300  # 315 chars: longer than the audit summary cap
+
+
+def test_R2_1_audit_args_scrub_before_the_summary_cap_hides_a_long_secret(tmp_path):
+    """A known secret longer than the 200-char summary cap must not leak its
+    first 200 characters: the persistence scrub runs on the raw args before
+    `summarize_args` truncates, not on the truncated summary."""
+    import json
+
+    log = AuditLog(tmp_path, settings=_settings(tmp_path, mail_password=LONG_SECRET))
+    log.append(
+        run_id="r",
+        actor="loom",
+        tool="t",
+        args={"q": LONG_SECRET, "note": "ordinary visible text", "blob": "n" * 250},
+        decision="executed",
+    )
+
+    rows = read_audit(tmp_path)
+    args = rows[0]["args"]
+    assert LONG_SECRET not in args
+    assert LONG_SECRET[:200] not in args  # the prefix the old order wrote verbatim
+    assert '"q"' in args and "***" in args
+    assert "ordinary visible text" in args  # normal args still shown
+    assert json.loads(args)["blob"] == "n" * 200  # the summary cap itself is unchanged
+
+    short_dir = tmp_path / "short"
+    short_log = AuditLog(short_dir, settings=_settings(short_dir, mail_password="bill", llm_api_key=""))
+    short_log.append(run_id="r", actor="loom", tool="t", args={"note": "heating bill due"}, decision="executed")
+    assert "heating bill due" in read_audit(short_dir)[0]["args"]
+
+
+def test_R2_1_audit_args_scrub_a_secret_straddling_the_summary_cap(tmp_path):
+    """A secret that starts before the cap and ends after it: the old order
+    wrote its first (cap - offset) characters; scrubbing first leaves none."""
+    value = "v" * 150 + LONG_SECRET  # the secret crosses the 200-char boundary
+
+    log = AuditLog(tmp_path, settings=_settings(tmp_path, mail_password=LONG_SECRET))
+    log.append(run_id="r", actor="loom", tool="t", args={"q": value}, decision="executed")
+
+    args = read_audit(tmp_path)[0]["args"]
+    assert LONG_SECRET not in args
+    assert LONG_SECRET[:50] not in args  # the fragment inside the old summary's first 200 chars
+    assert "v" * 150 in args and "***" in args  # non-secret prefix and mask still shown
+
+
 def test_R2_1_a_short_credential_value_never_rewrites_ordinary_text(tmp_path, monkeypatch):
     """A credential whose value is the word `bill` must not turn a successful
     `heating bill due` echo into `heating *** due`."""
