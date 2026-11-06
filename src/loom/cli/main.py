@@ -763,7 +763,7 @@ def _mcp_register(args: argparse.Namespace) -> int:
     except (McpError, OSError) as exc:
         print(f"error: {exc}")
         return 1
-    AuditLog(settings.loom_data_dir).append(
+    AuditLog(settings.loom_data_dir, settings=settings).append(
         run_id="",
         actor="mcp-cli",
         tool="mcp.register",
@@ -802,7 +802,7 @@ def _mcp_revoke(args: argparse.Namespace) -> int:
     except KeyError as exc:
         print(f"error: {exc.args[0]}")
         return 1
-    AuditLog(settings.loom_data_dir).append(
+    AuditLog(settings.loom_data_dir, settings=settings).append(
         run_id="",
         actor="mcp-cli",
         tool="mcp.revoke",
@@ -824,7 +824,7 @@ def _mcp_review(args: argparse.Namespace) -> int:
     except (McpError, OSError) as exc:
         print(f"error: {exc}")
         return 1
-    AuditLog(settings.loom_data_dir).append(
+    AuditLog(settings.loom_data_dir, settings=settings).append(
         run_id="",
         actor="mcp-cli",
         tool="mcp.review",

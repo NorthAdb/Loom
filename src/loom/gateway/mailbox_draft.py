@@ -102,7 +102,7 @@ def resolve_mailbox_draft(
     record = pending.get(pending_id)
     if record.status != PENDING:
         raise ValueError(f"pending approval {pending_id} is already {record.status}")
-    audit = AuditLog(settings.loom_data_dir)
+    audit = AuditLog(settings.loom_data_dir, settings=settings)
     gateway = ToolGateway(audit, ScopeStore(settings.loom_data_dir))
     verdict = gateway.check(record.scope_id, "mail_create_draft", side_effect=True, run_id=pending_id)
     correlation_id = verdict.scope.correlation_id if verdict.scope else None

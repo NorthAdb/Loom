@@ -167,7 +167,9 @@ class ImapFetchTransport:
             status, data = client.uid("FETCH", str(uid), _FETCH_FULL)
             self._check(status, "fetch the message")
             sections = [item[1] for item in data if isinstance(item, tuple)]
-            return _body_text(sections[0]) if not sections else _readable_text(sections[0])[:BODY_CHAR_CAP]
+            # An empty FETCH segment (data holds no tuple at all) is a message
+            # with no body to read, not an error: the caller gets "".
+            return _readable_text(sections[0])[:BODY_CHAR_CAP] if sections else ""
         finally:
             with suppress(Exception):
                 client.logout()

@@ -35,7 +35,9 @@ def open_graph(settings: Settings, *, mcp: bool = False, allow_missing_llm: bool
     it: the run goes gate -> aborted -> END and never invokes the model, so a
     human refusal must not depend on model availability.
     """
-    gateway = ToolGateway(AuditLog(settings.loom_data_dir), ScopeStore(settings.loom_data_dir), allow_unscoped=True)
+    gateway = ToolGateway(
+        AuditLog(settings.loom_data_dir, settings=settings), ScopeStore(settings.loom_data_dir), allow_unscoped=True
+    )
     extra_registry = build_mcp_registry(settings) if mcp else None
     if allow_missing_llm and not settings.llm_api_key:
         model: object = InertChatModel()

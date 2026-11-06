@@ -8,9 +8,9 @@ The repository is the source of truth for progress and for locked decisions. An 
 | [ROADMAP.md](ROADMAP.md) | What comes next: Gate 6 onward, priority, and the hard boundaries. Not a record of what shipped. |
 | [DECISIONS.md](DECISIONS.md) | Locked choices (ADRs) and their consequences. Intent, not implementation. |
 | [VISION.md](VISION.md) | Product intent, the Gate 1–5 loop that already exists, and the boundaries that do not move. |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | The loop that runs today, and the Gate 6+ target marked as not built. |
-| [SECURITY.md](SECURITY.md) | Constraints every change has to satisfy, including the Gate 6+ rules that are not implemented yet. |
-| [RESUME_STORY.md](RESUME_STORY.md) | What a reader can reproduce from this tree today. It does not claim Gate 6+. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | The loop that runs today — through the Gate 8/9 feature code, neither gate Passed yet — and the Gate 10+ target. |
+| [SECURITY.md](SECURITY.md) | Constraints every change has to satisfy, noting which Gate 6+ rules are implemented and which still bind future code. |
+| [RESUME_STORY.md](RESUME_STORY.md) | What a reader can reproduce from this tree today. It does not claim Gate 8 or Gate 9 as Passed. |
 | [../README.md](../README.md) | How to run what exists, and the one-line current position. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | A change updates STATUS, and a changed decision updates the ADR. |
 

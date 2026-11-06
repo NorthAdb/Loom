@@ -145,7 +145,7 @@ def create_app(
         transport = fetch_transport or build_fetch_transport(settings)
         if transport is None:
             raise Refused("mail is not configured")
-        audit_log = AuditLog(data_dir)
+        audit_log = AuditLog(data_dir, settings=settings)
         existing = {record.message.message_id for record in inbox.list()}
         new = 0
         for row in transport.list_recent():
@@ -221,7 +221,7 @@ def create_app(
         # record, and the resolve path builds the real transport itself.
         try:
             request_mailbox_draft(
-                draft_id, settings, pending_store, ScopeStore(data_dir), AuditLog(data_dir), transport=None
+                draft_id, settings, pending_store, ScopeStore(data_dir), AuditLog(data_dir, settings=settings), transport=None
             )
         except KeyError:
             raise HTTPException(status_code=404) from None

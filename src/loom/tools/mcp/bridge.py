@@ -17,13 +17,13 @@ underscores); the mapping is validated injective at registration and build
 time, and `canonical_action_name` is its single reverse.
 """
 
-import os
 import re
 
 from langchain_core.tools import StructuredTool
 
 from loom.audit.log import AuditLog
 from loom.core.config import Settings
+from loom.core.secrets import known_secret_values, scrub_text
 from loom.ops.routines import now_local
 from loom.tools.mcp.client import McpClient
 from loom.tools.mcp.fingerprint import schema_fingerprint
@@ -73,22 +73,18 @@ def _reject(audit: AuditLog, server_id: str, tool_name: str, reason: str) -> Non
 
 
 def _scrub(text: str, settings: Settings) -> str:
-    """Known credential values never reach the model: they become *** first.
+    """Known secret values never reach the model: they become *** first.
 
-    Every registered server's credential value is read from the parent's own
-    environment and replaced longest-first. With the minimal child
-    environment a server can only ever hold its own secret; scrubbing all of
-    them closes the argument-echo channel too.
+    The scrub set is every registered server's credential value plus the
+    Settings mail password and LLM key (`loom.core.secrets`), replaced
+    longest-first. With the minimal child environment a server can only ever
+    hold its own secret, but it can echo a secret it was handed in its
+    arguments — scrubbing the full known set closes that echo channel for
+    the mail password and the LLM key too. Values shorter than
+    MIN_SCRUB_LENGTH are skipped there, so an ordinary word that happens to
+    equal a short credential is never rewritten.
     """
-    values = set()
-    for record in McpServerStore(settings.loom_data_dir).list():
-        if record.credential_env:
-            value = os.environ.get(record.credential_env, "")
-            if value:
-                values.add(value)
-    for value in sorted(values, key=len, reverse=True):
-        text = text.replace(value, "***")
-    return text
+    return scrub_text(text, known_secret_values(settings))
 
 
 def mcp_tool_spec(
@@ -99,7 +95,7 @@ def mcp_tool_spec(
 
     def _call(**kwargs) -> str:
         store = McpServerStore(settings.loom_data_dir)
-        audit = AuditLog(settings.loom_data_dir)
+        audit = AuditLog(settings.loom_data_dir, settings=settings)
         try:
             record = store.get(server_id)
         except KeyError:

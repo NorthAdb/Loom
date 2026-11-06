@@ -72,7 +72,7 @@ def run_routine(
     """
     if not routine.enabled:
         raise ValueError(f"routine is disabled: {routine.id}")
-    audit = AuditLog(settings.loom_data_dir)
+    audit = AuditLog(settings.loom_data_dir, settings=settings)
     guard = guard_from_settings(settings, settings.loom_data_dir)
     thread_id = _thread_id(routine.id)
     run_id = uuid.uuid4().hex
@@ -195,7 +195,7 @@ def run_triage(message_id: str, settings: Settings, pending: PendingStore, *, gr
     unauthenticated sender) is skipped without a graph run: an
     unauthenticated turn must not run with tool rights at all.
     """
-    audit = AuditLog(settings.loom_data_dir)
+    audit = AuditLog(settings.loom_data_dir, settings=settings)
     try:
         record = InboxStore(settings.loom_data_dir).get(message_id)
     except KeyError as exc:

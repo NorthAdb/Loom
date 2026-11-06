@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from loom.core.logging import is_sensitive
+from loom.core.secrets import known_secret_values, scrub_text
 
 _VALUE_CAP = 200
 
@@ -28,10 +29,21 @@ def summarize_args(args: dict[str, Any], cap: int | None = _VALUE_CAP) -> str:
 
 
 class AuditLog:
-    """Appends records to <data dir>/audit/YYYYMMDD.jsonl (local date)."""
+    """Appends records to <data dir>/audit/YYYYMMDD.jsonl (local date).
 
-    def __init__(self, data_dir: Path) -> None:
+    Args are scrubbed of known secret values before they are written: a
+    secret-named key is masked by `redact_args`, and a known secret *value*
+    appearing under any key (an MCP tool argument echoing the mail password,
+    say) is masked here, at the persistence boundary, whatever the caller.
+    `settings`, when supplied, contributes its mail password and LLM key to
+    the scrub set; without it the set falls back to the environment those
+    fields load from plus every registered server's credential.
+    """
+
+    def __init__(self, data_dir: Path, settings: Any = None) -> None:
         self._dir = Path(data_dir) / "audit"
+        self._data_dir = Path(data_dir)
+        self._settings = settings
 
     def append(
         self,
@@ -53,7 +65,7 @@ class AuditLog:
             "run_id": run_id,
             "actor": actor,
             "tool": tool,
-            "args": summarize_args(args),
+            "args": scrub_text(summarize_args(args), known_secret_values(self._settings, self._data_dir)),
             "decision": decision,
         }
         if correlation_id is not None:

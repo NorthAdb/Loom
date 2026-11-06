@@ -386,7 +386,7 @@ loom memory facts                                          # 3. the facts are ba
 
 - [docs/README.md](docs/README.md) — which file owns progress, the plan, and decisions
 - [docs/VISION.md](docs/VISION.md) — vision and boundaries
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target layers, with Gate 6+ marked unbuilt
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target layers, with the Gate 8/9 feature code in the tree and neither gate Passed yet
 - [docs/DECISIONS.md](docs/DECISIONS.md) — locked choices
 - [docs/RESUME_STORY.md](docs/RESUME_STORY.md) — what this repository demonstrates, with reproducible numbers
 - [docs/ROADMAP.md](docs/ROADMAP.md) — Gate 6+ plan (Gate 1–5 are done)

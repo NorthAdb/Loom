@@ -12,6 +12,7 @@ from langgraph.types import interrupt
 
 from loom.audit.log import AuditLog, summarize_args
 from loom.core.config import Settings
+from loom.core.secrets import known_secret_values, scrub_text, scrub_value
 from loom.gateway.scope import ScopeStore
 from loom.gateway.tool_gateway import ToolGateway
 from loom.memory import (
@@ -38,6 +39,35 @@ MEMORY_REFUSAL = (
 
 _MAIL_DRAFT_TOOLS = {"mail_create_draft", "mail_update_draft", "draft_create_local"}
 _APPROVAL_SIZE_LIMIT = APPROVAL_SIZE_LIMIT
+
+
+def _scrubbed_model_message(message, values):
+    """A model message with every known secret value masked, before it is state.
+
+    The agent node's return is what the checkpointer persists and what the
+    gate, the audit, the pending queue, and execution all derive from, so a
+    secret a model was tricked into proposing (in its text or a tool call's
+    arguments) is masked here, once, at the boundary — after this point no
+    checkpoint, WAL, audit row, backup, or tool result built from this
+    message can carry it. The rest of the proposal is untouched: the full
+    text still reaches the approval, with only the secret values themselves
+    masked, exactly as secret-named keys were already masked by redact_args.
+    """
+    if not values:
+        return message
+    update = {}
+    content = getattr(message, "content", None)
+    if isinstance(content, str) and content:
+        update["content"] = scrub_text(content, values)
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls:
+        update["tool_calls"] = scrub_value(tool_calls, values)
+    if not update:
+        return message
+    try:
+        return message.model_copy(update=update)
+    except Exception:  # noqa: BLE001 - a message type without model_copy keeps its original form
+        return message
 
 
 def _draft_args_size(args: dict) -> int:
@@ -117,7 +147,7 @@ def build_graph(
     `extra_registry` merges additional ToolSpecs (the Gate 9 MCP registry) after make_tools, so
     `mcp:` names resolve through the same gate and run_tools seams."""
     registry = {**make_tools(settings, transports), **(extra_registry or {})}
-    audit = AuditLog(settings.loom_data_dir)
+    audit = AuditLog(settings.loom_data_dir, settings=settings)
     facts_store = FactsStore(settings.loom_data_dir)
     semantic: SemanticMemory = memory if memory is not None else build_semantic_memory(settings)
     bound = model.bind_tools([spec.func for spec in registry.values()])
@@ -154,7 +184,7 @@ def build_graph(
         note = state.get("memory_note") or ""
         if note:
             messages = [SystemMessage(content=note), *messages]
-        return {"messages": [bound.invoke(messages)]}
+        return {"messages": [_scrubbed_model_message(bound.invoke(messages), known_secret_values(settings))]}
 
     def _last_tool_calls(state: GraphState) -> list[dict]:
         last = state["messages"][-1]
@@ -276,6 +306,11 @@ def build_graph(
         return "tools" if state["approval_status"] == "approved" else "aborted"
 
     def run_tools(state: GraphState) -> dict:
+        # Tool text is untrusted and may echo a known secret (an MCP echo, a
+        # file that quotes one); it is scrubbed before it becomes a message,
+        # so the model-visible text and the checkpoint built from it stay
+        # clean even for tools that do not scrub their own returns.
+        secret_values = known_secret_values(settings)
         messages: list[ToolMessage] = []
         for call in _last_tool_calls(state):
             canonical = _canonical(call["name"])
@@ -349,9 +384,11 @@ def build_graph(
                 correlation_id = verdict.scope.correlation_id if verdict.scope else None
             try:
                 result = spec.func.invoke(call["args"])
-                messages.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
+                messages.append(ToolMessage(content=scrub_text(str(result), secret_values), tool_call_id=call["id"]))
             except Exception as exc:  # noqa: BLE001 - a tool failure reaches the model as a result, not a crash
-                messages.append(ToolMessage(content=f"error: {exc}", tool_call_id=call["id"]))
+                messages.append(
+                    ToolMessage(content=f"error: {scrub_text(str(exc), secret_values)}", tool_call_id=call["id"])
+                )
                 if spec.side_effect:
                     # An McpError is a policy veto (frozen server, fingerprint
                     # drift, out-of-subset), not a malfunction: it lands as
