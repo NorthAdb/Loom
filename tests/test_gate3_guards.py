@@ -29,6 +29,11 @@ FORBIDDEN_SYMBOLS = (
 # drafts by UID. Bare store/search/expunge are gone; UID-only is the rule.
 IMAP_VERBS = {"uid", "append", "select", "login", "logout"}
 
+# tools/mail_fetch.py is read-only by construction (ADR-016 layer 1): the
+# transport's client verbs are pinned to this set, and no write command word
+# may hide inside a quoted IMAP argument either.
+FETCH_VERBS = {"login", "logout", "select", "examine", "uid", "search", "fetch"}
+
 
 def source_text() -> str:
     # Every module in the package, recursively: a forbidden symbol must not
@@ -76,6 +81,17 @@ def test_mail_module_uses_only_draft_and_read_imap_verbs():
 
     assert verbs <= IMAP_VERBS, verbs
     assert module_uses == {"IMAP4_SSL", "IMAP4.error"}, module_uses
+
+
+def test_mail_fetch_module_uses_only_read_only_imap_verbs():
+    text = (_SRC / "tools" / "mail_fetch.py").read_text(encoding="utf-8")
+
+    verbs = set(re.findall(r"client\.(\w+)\(", text))
+    write_words = re.findall(r'"(APPEND|STORE|EXPUNGE|DELETE|CREATE|CLOSE)"', text, re.IGNORECASE)
+
+    assert verbs, "the fetch transport must talk to a client object for this pin to mean anything"
+    assert verbs <= FETCH_VERBS, verbs
+    assert write_words == [], write_words
 
 
 def test_mail_tool_args_and_results_never_carry_the_password(tmp_path):

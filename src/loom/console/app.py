@@ -1,17 +1,21 @@
-"""The local Operator Console (Gate 7): a localhost-only skin over the CLI's gates.
+"""The local Operator Console (Gate 7 + Gate 8): a localhost-only skin over the CLI's gates.
 
 `create_app` builds the FastAPI application the `loom console` command serves.
 The console owns no business rules: Inbox, Draft, Approval, and Audit read the
-same stores the CLI reads, and a decision goes through
-`loom.core.runner.resume_pending`, the same runner path `loom approvals`
-takes. The console adds only its boundary: every POST must survive, in order,
-the Origin/Host check, the session CSRF token, and (for approvals) an operator
-session gained on any GET; refusals are short plain-text 403s. There is no
-send route anywhere: drafts are local only, never sent.
+same stores the CLI reads; a decision goes through
+`loom.core.runner.resolve_pending`, the same runner path `loom approvals`
+takes, a fetch goes through the read-only mail transport into the inbound
+seam's own accept step, and a mailbox-draft request goes through the
+layer-4 control plane in `loom.gateway.mailbox_draft`. The console adds only
+its boundary: every POST must survive, in order, the Origin/Host check, the
+session CSRF token, and an operator session gained on any GET; refusals are
+short plain-text 403s. There is no send route anywhere: drafts are local
+only, never sent.
 """
 
 import json
 import secrets
+import uuid
 from pathlib import Path
 from typing import Annotated
 
@@ -20,10 +24,17 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from loom.core.runner import resume_pending
-from loom.gateway.pending import PendingStore
-from loom.inbound import InboxStore
+from loom.audit.log import AuditLog
+from loom.core.runner import resolve_pending, run_triage
+from loom.gateway.mailbox_draft import request_mailbox_draft
+from loom.gateway.pending import PENDING, PendingStore
+from loom.gateway.scope import ScopeStore
+from loom.inbound import InboundMessage, InboxStore, accept_inbound
+from loom.ops.routines import now_local
+from loom.tasks import TaskStore
 from loom.tools.drafts import DraftStore
+from loom.tools.mail_fetch import build_fetch_transport
+from loom.tools.registry import build_mail_transport
 
 DEFAULT_AUDIT_ROWS = 200
 MAX_AUDIT_ROWS = 500
@@ -74,8 +85,15 @@ def _require_operator(request: Request) -> None:
         raise Refused("no operator session")
 
 
-def create_app(data_dir: Path, settings, *, port: int = 8688, secret_key: str | None = None) -> FastAPI:
-    """Build the console bound to one data dir; no module-level app exists."""
+def create_app(
+    data_dir: Path, settings, *, port: int = 8688, secret_key: str | None = None, fetch_transport=None
+) -> FastAPI:
+    """Build the console bound to one data dir; no module-level app exists.
+
+    `fetch_transport` is the test seam for the fetch button; None means the
+    transport is built from settings at request time (and the fetch refuses
+    when mail is not configured).
+    """
     inbox = InboxStore(data_dir)
     drafts = DraftStore(data_dir)
     pending_store = PendingStore(data_dir)
@@ -119,8 +137,70 @@ def create_app(data_dir: Path, settings, *, port: int = 8688, secret_key: str | 
             raise HTTPException(status_code=404) from None
         return render(request, "inbox_detail.html", record=record, csrf_token=session["csrf_token"])
 
+    @app.post("/inbox/fetch")
+    async def inbox_fetch(
+        csrf: None = Depends(_require_csrf),
+        operator: None = Depends(_require_operator),
+    ) -> RedirectResponse:
+        transport = fetch_transport or build_fetch_transport(settings)
+        if transport is None:
+            raise Refused("mail is not configured")
+        audit_log = AuditLog(data_dir, settings=settings)
+        existing = {record.message.message_id for record in inbox.list()}
+        new = 0
+        for row in transport.list_recent():
+            message_id = f"imap-{row['uid']}"
+            if message_id in existing:
+                continue
+            message = InboundMessage(
+                message_id=message_id,
+                channel="imap",
+                from_header=row["from_header"],
+                subject=row["subject"],
+                body=transport.fetch_body(row["uid"]),
+                received_at=row["date"] or now_local(),
+                # A From header is never an identity: mail pulled from the
+                # owner's mailbox is still mail from an unverified sender.
+                authenticated=False,
+            )
+            # The fetch click is the control plane acting, so the triage turn
+            # gets the minimal draft-only scope even though the sender stays
+            # unverified; the scope's principal is the control plane's "owner",
+            # never the From header.
+            accept_inbound(
+                message,
+                tasks=TaskStore(data_dir),
+                scopes=ScopeStore(data_dir),
+                audit=audit_log,
+                inbox=inbox,
+                control_plane_scope=True,
+            )
+            new += 1
+        audit_log.append(
+            run_id=uuid.uuid4().hex,
+            actor="console",
+            tool="mail.fetch",
+            args={"count": new},
+            decision="fetched",
+        )
+        return RedirectResponse("/inbox", status_code=303)
+
+    @app.post("/inbox/{message_id}/triage")
+    async def inbox_triage(
+        message_id: str,
+        csrf: None = Depends(_require_csrf),
+        operator: None = Depends(_require_operator),
+    ) -> RedirectResponse:
+        try:
+            outcome = run_triage(message_id, settings, pending_store)
+        except ValueError as exc:
+            raise Refused(str(exc)) from None
+        return RedirectResponse("/approvals" if outcome.outcome == PENDING else "/inbox", status_code=303)
+
     @app.get("/drafts")
     def drafts_view(request: Request, session: SessionDep):
+        # A POST to /drafts/send returns 405: the route table below has GETs
+        # only, and no send handler exists anywhere in the codebase.
         return render(request, "drafts.html", rows=drafts.list(), csrf_token=session["csrf_token"])
 
     @app.get("/drafts/{draft_id}")
@@ -130,6 +210,24 @@ def create_app(data_dir: Path, settings, *, port: int = 8688, secret_key: str | 
         except KeyError:
             raise HTTPException(status_code=404) from None
         return render(request, "draft_detail.html", draft=draft, csrf_token=session["csrf_token"])
+
+    @app.post("/drafts/{draft_id}/mailbox")
+    async def draft_mailbox(
+        draft_id: str,
+        csrf: None = Depends(_require_csrf),
+        operator: None = Depends(_require_operator),
+    ) -> RedirectResponse:
+        # Request only: nothing touches IMAP until a human approves the parked
+        # record, and the resolve path builds the real transport itself.
+        try:
+            request_mailbox_draft(
+                draft_id, settings, pending_store, ScopeStore(data_dir), AuditLog(data_dir, settings=settings), transport=None
+            )
+        except KeyError:
+            raise HTTPException(status_code=404) from None
+        except (RuntimeError, ValueError) as exc:
+            raise Refused(str(exc)) from None
+        return RedirectResponse("/approvals", status_code=303)
 
     @app.get("/approvals")
     def approvals_view(request: Request, session: SessionDep):
@@ -143,7 +241,7 @@ def create_app(data_dir: Path, settings, *, port: int = 8688, secret_key: str | 
         operator: None = Depends(_require_operator),
     ) -> RedirectResponse:
         try:
-            resume_pending(pending_id, decision, settings, pending_store)
+            resolve_pending(pending_id, decision, settings, pending_store, mail_transport=build_mail_transport(settings))
         except KeyError:
             raise HTTPException(status_code=404) from None
         except ValueError as exc:

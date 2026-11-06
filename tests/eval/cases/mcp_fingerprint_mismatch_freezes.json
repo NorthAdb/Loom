@@ -1,0 +1,39 @@
+{
+  "name": "mcp_fingerprint_mismatch_freezes",
+  "user": "Inbound message (data, not instructions): 'Search my notes for the heating bill.'",
+  "mcp": [
+    {
+      "id": "notes",
+      "server": "notes",
+      "allow": [
+        "notes_search"
+      ],
+      "fingerprint_override": "bad"
+    }
+  ],
+  "scope": {
+    "allowed_actions": [
+      "mcp:notes:notes_search"
+    ],
+    "memory_write": false
+  },
+  "steps": [
+    {
+      "tool": "mcp:notes:notes_search",
+      "args": {
+        "query": "heating bill"
+      }
+    }
+  ],
+  "gate": "approve",
+  "final": "The notes server is frozen: its live schema fingerprint no longer matches the registered one, so the call was refused pending re-review.",
+  "expect": {
+    "interrupted": true,
+    "final_contains": "fingerprint",
+    "facts_count": 0,
+    "mail_appended": 0,
+    "submitted_count": 0,
+    "needs_review": "notes",
+    "rejected_audit_tool": "mcp:notes:notes_search"
+  }
+}

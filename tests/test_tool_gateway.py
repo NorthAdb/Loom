@@ -110,3 +110,30 @@ def test_a_corrupt_scope_store_fails_closed(tmp_path, gateway):
     decision = gw.check("whatever", "write_file", side_effect=True, run_id="r1")
 
     assert decision.allowed is False and "scope store unavailable" in decision.reason
+
+
+def test_memory_write_action_is_refused_when_the_scope_says_false(tmp_path, gateway):
+    gw, _, _ = gateway
+    store = ScopeStore(tmp_path)
+    scope = issue_scope("owner", "sim_mail", "sandbox", ["memory_upsert"], ttl_seconds=None)
+    store.add(scope)
+
+    decision = gw.check(scope.scope_id, "memory_upsert", side_effect=True, run_id="r1", memory_write=True)
+
+    assert decision.allowed is False
+    assert "writes memory" in decision.reason and "memory_write is false" in decision.reason
+    record = _records(tmp_path)[0]
+    assert record["actor"] == "gateway" and record["decision"] == "rejected"
+    assert record["correlation_id"] == scope.correlation_id
+
+
+def test_memory_write_action_is_allowed_when_the_scope_says_true(tmp_path, gateway):
+    gw, _, _ = gateway
+    scope = issue_scope("owner", "sim_mail", "sandbox", ["memory_upsert"], memory_write=True, ttl_seconds=None)
+    ScopeStore(tmp_path).add(scope)
+
+    decision = gw.check(scope.scope_id, "memory_upsert", side_effect=True, run_id="r1", memory_write=True)
+
+    assert decision.allowed is True
+    record = _records(tmp_path)[0]
+    assert record["decision"] == "authorized"

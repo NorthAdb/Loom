@@ -12,6 +12,8 @@ from langgraph.types import interrupt
 
 from loom.audit.log import AuditLog, summarize_args
 from loom.core.config import Settings
+from loom.core.secrets import known_secret_values, scrub_text, scrub_value
+from loom.gateway.scope import ScopeStore
 from loom.gateway.tool_gateway import ToolGateway
 from loom.memory import (
     FactsStore,
@@ -24,7 +26,9 @@ from loom.memory import (
 from loom.memory.context import build_context_note
 from loom.memory.episodic import EpisodicStore
 from loom.ops.checkpoints import make_checkpointer
-from loom.tools import APPROVAL_SIZE_LIMIT, make_tools
+from loom.tools import APPROVAL_SIZE_LIMIT, ToolSpec, make_tools
+from loom.tools.mcp import McpError
+from loom.tools.mcp.bridge import canonical_action_name
 
 logger = logging.getLogger("loom")
 
@@ -33,10 +37,37 @@ MEMORY_REFUSAL = (
     "so nothing was saved to memory."
 )
 
-_GATE_PAYLOAD_CAP = 2000
-
 _MAIL_DRAFT_TOOLS = {"mail_create_draft", "mail_update_draft", "draft_create_local"}
 _APPROVAL_SIZE_LIMIT = APPROVAL_SIZE_LIMIT
+
+
+def _scrubbed_model_message(message, values):
+    """A model message with every known secret value masked, before it is state.
+
+    The agent node's return is what the checkpointer persists and what the
+    gate, the audit, the pending queue, and execution all derive from, so a
+    secret a model was tricked into proposing (in its text or a tool call's
+    arguments) is masked here, once, at the boundary — after this point no
+    checkpoint, WAL, audit row, backup, or tool result built from this
+    message can carry it. The rest of the proposal is untouched: the full
+    text still reaches the approval, with only the secret values themselves
+    masked, exactly as secret-named keys were already masked by redact_args.
+    """
+    if not values:
+        return message
+    update = {}
+    content = getattr(message, "content", None)
+    if isinstance(content, str) and content:
+        update["content"] = scrub_text(content, values)
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls:
+        update["tool_calls"] = scrub_value(tool_calls, values)
+    if not update:
+        return message
+    try:
+        return message.model_copy(update=update)
+    except Exception:  # noqa: BLE001 - a message type without model_copy keeps its original form
+        return message
 
 
 def _draft_args_size(args: dict) -> int:
@@ -107,13 +138,16 @@ def build_graph(
     memory: SemanticMemory | None = None,
     transports: dict | None = None,
     gateway: ToolGateway | None = None,
+    extra_registry: "dict[str, ToolSpec] | None" = None,
 ):
     """Compile the pre_agent/agent/gate/tools/post_turn/aborted graph. Long-lived callers pass the
     checkpointer so the connection lifecycle stays with them. Tests inject a fake `memory` and
     fake mail/calendar `transports`; None builds the real ones from settings. A `gateway` turns on
-    the Gate 7 scope checks at the gate and in run_tools; None keeps the Gate 1-5 behavior."""
-    registry = make_tools(settings, transports)
-    audit = AuditLog(settings.loom_data_dir)
+    the Gate 7 scope checks at the gate and in run_tools; None keeps the Gate 1-5 behavior.
+    `extra_registry` merges additional ToolSpecs (the Gate 9 MCP registry) after make_tools, so
+    `mcp:` names resolve through the same gate and run_tools seams."""
+    registry = {**make_tools(settings, transports), **(extra_registry or {})}
+    audit = AuditLog(settings.loom_data_dir, settings=settings)
     facts_store = FactsStore(settings.loom_data_dir)
     semantic: SemanticMemory = memory if memory is not None else build_semantic_memory(settings)
     bound = model.bind_tools([spec.func for spec in registry.values()])
@@ -150,46 +184,75 @@ def build_graph(
         note = state.get("memory_note") or ""
         if note:
             messages = [SystemMessage(content=note), *messages]
-        return {"messages": [bound.invoke(messages)]}
+        return {"messages": [_scrubbed_model_message(bound.invoke(messages), known_secret_values(settings))]}
 
     def _last_tool_calls(state: GraphState) -> list[dict]:
         last = state["messages"][-1]
         return list(getattr(last, "tool_calls", None) or [])
 
+    def _canonical(name: str) -> "str | None":
+        """The registry key a model-proposed tool name resolves to.
+
+        Native names pass through; the mapped mcp_ binding form maps back to
+        its one canonical mcp:<server_id>:<tool> key. None when unknown.
+        """
+        return canonical_action_name(name, registry)
+
+    def _is_mcp_shaped(name: str) -> bool:
+        return name.startswith(("mcp:", "mcp_"))
+
     def route_after_agent(state: GraphState) -> str:
         calls = _last_tool_calls(state)
         if not calls:
             return "post_turn"
-        if any(spec.side_effect for call in calls if (spec := registry.get(call["name"]))):
-            return "gate"
+        for call in calls:
+            canonical = _canonical(call["name"])
+            spec = registry.get(canonical) if canonical else None
+            if spec is not None and spec.side_effect:
+                return "gate"
         return "tools"
 
     def gate(state: GraphState) -> dict:
-        calls = [c for c in _last_tool_calls(state) if (spec := registry.get(c["name"])) and spec.side_effect]
         proposals = []
-        for c in calls:
-            spec = registry[c["name"]]
+        for c in _last_tool_calls(state):
+            canonical = _canonical(c["name"])
+            spec = registry.get(canonical) if canonical else None
+            if spec is None or not spec.side_effect:
+                continue
             context = spec.approval_context() if spec.approval_context else {}
             # The approval context is merged over the model's args: the
-            # transport's view of the world is what the human must see.
-            proposals.append((c, {**c["args"], **context}))
+            # transport's view of the world is what the human must see. The
+            # canonical action name is what the scope, the audit, and the
+            # payload all use.
+            proposals.append((c, {**c["args"], **context}, canonical))
         refused = []
-        for c, args in proposals:
-            hit = _refusal_before_approval(c["name"], args, registry[c["name"]].approval_context is not None)
+        for c, args, canonical in proposals:
+            hit = _refusal_before_approval(canonical, args, registry[canonical].approval_context is not None)
+            if hit is None and len(summarize_args(args, cap=None)) > _APPROVAL_SIZE_LIMIT:
+                # What the human sees is what will run: a payload too large to
+                # show in full is refused before any human reads it, never
+                # shown truncated and executed whole.
+                hit = (
+                    (
+                        f"Refused before approval: the payload exceeds the "
+                        f"{_APPROVAL_SIZE_LIMIT}-character approval size limit."
+                    ),
+                    {"reason": "approval payload exceeds the size limit"},
+                )
             if hit:
-                refused.append((c, *hit))
+                refused.append((c, hit[0], canonical, hit[1]))
         if refused:
-            for c, _, reason in refused:
+            for c, _, canonical, reason in refused:
                 audit.append(
                     run_id=state.get("run_id", ""),
                     actor="loom",
-                    tool=c["name"],
+                    tool=canonical,
                     args=reason,
                     decision="rejected",
                 )
-            c, line, _ = refused[0]
+            c, line, canonical, _ = refused[0]
             payload = {
-                "tools": [{"name": c["name"], "args": summarize_args(c["args"])}],
+                "tools": [{"name": canonical, "args": summarize_args(c["args"])}],
                 "refusal": line,
             }
             return {"approval_status": "rejected", "pending_action": payload}
@@ -199,17 +262,21 @@ def build_graph(
         correlation_by_name: dict[str, str | None] = {}
         if gateway is not None:
             verdicts = {
-                call["name"]: gateway.check(
-                    state.get("scope_id"), call["name"], side_effect=True, run_id=state.get("run_id", "")
+                canonical: gateway.check(
+                    state.get("scope_id"),
+                    canonical,
+                    side_effect=True,
+                    run_id=state.get("run_id", ""),
+                    memory_write=registry[canonical].memory_write,
                 )
-                for call in calls
+                for _, _, canonical in proposals
             }
-            blocked = [(call, verdicts[call["name"]]) for call in calls if not verdicts[call["name"]].allowed]
+            blocked = [(canonical, verdicts[canonical]) for _, _, canonical in proposals if not verdicts[canonical].allowed]
             if blocked:
-                c, verdict = blocked[0]
+                canonical, verdict = blocked[0]
                 payload = {
-                    "tools": [{"name": c["name"], "args": summarize_args(c["args"])}],
-                    "refusal": f"Gateway refused {c['name']}: {verdict.reason}",
+                    "tools": [{"name": canonical, "args": verdict.reason}],
+                    "refusal": f"Gateway refused {canonical}: {verdict.reason}",
                 }
                 return {"approval_status": "rejected", "pending_action": payload}
             correlation_by_name = {
@@ -217,29 +284,21 @@ def build_graph(
             }
         payload = {
             "tools": [
-                {
-                    "name": c["name"],
-                    "args": summarize_args(
-                        args,
-                        cap=_APPROVAL_SIZE_LIMIT
-                        if (registry[c["name"]].approval_context or c["name"] in _MAIL_DRAFT_TOOLS)
-                        else _GATE_PAYLOAD_CAP,
-                    ),
-                }
-                for c, args in proposals
+                {"name": canonical, "args": summarize_args(args, cap=None)}
+                for c, args, canonical in proposals
             ],
             "reason": "These tools change state and need human approval.",
         }
         resume = interrupt(payload)
         status = "approved" if resume["decision"] == "approve" else "rejected"
-        for c, args in proposals:
+        for c, args, canonical in proposals:
             audit.append(
                 run_id=state.get("run_id", ""),
                 actor="human",
-                tool=c["name"],
+                tool=canonical,
                 args=args,
                 decision=status,
-                correlation_id=correlation_by_name.get(c["name"]),
+                correlation_id=correlation_by_name.get(canonical),
             )
         return {"approval_status": status, "pending_action": payload}
 
@@ -247,11 +306,57 @@ def build_graph(
         return "tools" if state["approval_status"] == "approved" else "aborted"
 
     def run_tools(state: GraphState) -> dict:
+        # Tool text is untrusted and may echo a known secret (an MCP echo, a
+        # file that quotes one); it is scrubbed before it becomes a message,
+        # so the model-visible text and the checkpoint built from it stay
+        # clean even for tools that do not scrub their own returns.
+        secret_values = known_secret_values(settings)
         messages: list[ToolMessage] = []
         for call in _last_tool_calls(state):
-            spec = registry.get(call["name"])
+            canonical = _canonical(call["name"])
+            spec = registry.get(canonical) if canonical else None
             if spec is None:
-                messages.append(ToolMessage(content=f"error: unknown tool {call['name']}", tool_call_id=call["id"]))
+                if _is_mcp_shaped(call["name"]):
+                    # An MCP-shaped proposal with no registered spec is ruled
+                    # on and audited, never a silent unknown: the gateway
+                    # refuses names outside the scope (correlated row), and a
+                    # name the scope somehow allows but nothing registers gets
+                    # its own correlated rejected row here.
+                    verdict = None
+                    if gateway is not None:
+                        verdict = gateway.check(
+                            state.get("scope_id"),
+                            call["name"],
+                            side_effect=True,
+                            run_id=state.get("run_id", ""),
+                        )
+                    if verdict is not None and not verdict.allowed:
+                        messages.append(
+                            ToolMessage(
+                                content=f"error: gateway refused {call['name']}: {verdict.reason}",
+                                tool_call_id=call["id"],
+                            )
+                        )
+                        continue
+                    correlation = verdict.scope.correlation_id if verdict is not None and verdict.scope else None
+                    try:
+                        audit.append(
+                            run_id=state.get("run_id", ""),
+                            actor="gateway",
+                            tool=call["name"],
+                            args={"reason": "no such registered mcp tool"},
+                            decision="rejected",
+                            correlation_id=correlation,
+                        )
+                    except (OSError, ValueError, TypeError) as exc:
+                        logger.warning(
+                            "the unregistered-mcp refusal could not be audited", extra={"error": str(exc)}
+                        )
+                    messages.append(
+                        ToolMessage(content=f"error: unregistered mcp tool {call['name']}", tool_call_id=call["id"])
+                    )
+                else:
+                    messages.append(ToolMessage(content=f"error: unknown tool {call['name']}", tool_call_id=call["id"]))
                 continue
             # Same merge as the gate, so the audit records what was approved,
             # not what the model claimed; read before the invoke, before the
@@ -263,28 +368,39 @@ def build_graph(
                 # Execution-time re-check: an approval that went stale (the
                 # scope expired or the store changed) still cannot execute.
                 verdict = gateway.check(
-                    state.get("scope_id"), call["name"], side_effect=spec.side_effect, run_id=state.get("run_id", "")
+                    state.get("scope_id"),
+                    canonical,
+                    side_effect=spec.side_effect,
+                    run_id=state.get("run_id", ""),
+                    memory_write=spec.memory_write,
                 )
                 if not verdict.allowed:
                     messages.append(
                         ToolMessage(
-                            content=f"error: gateway refused {call['name']}: {verdict.reason}", tool_call_id=call["id"]
+                            content=f"error: gateway refused {canonical}: {verdict.reason}", tool_call_id=call["id"]
                         )
                     )
                     continue
                 correlation_id = verdict.scope.correlation_id if verdict.scope else None
             try:
                 result = spec.func.invoke(call["args"])
-                messages.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
+                messages.append(ToolMessage(content=scrub_text(str(result), secret_values), tool_call_id=call["id"]))
             except Exception as exc:  # noqa: BLE001 - a tool failure reaches the model as a result, not a crash
-                messages.append(ToolMessage(content=f"error: {exc}", tool_call_id=call["id"]))
+                messages.append(
+                    ToolMessage(content=f"error: {scrub_text(str(exc), secret_values)}", tool_call_id=call["id"])
+                )
                 if spec.side_effect:
+                    # An McpError is a policy veto (frozen server, fingerprint
+                    # drift, out-of-subset), not a malfunction: it lands as
+                    # `rejected`, correlated like the gateway rows, so the
+                    # §4.3 rejection chain is readable end to end.
+                    decision = "rejected" if isinstance(exc, McpError) else "failed"
                     audit.append(
                         run_id=state.get("run_id", ""),
                         actor="loom",
-                        tool=call["name"],
-                        args=audited,
-                        decision="failed",
+                        tool=canonical,
+                        args=audited if decision == "failed" else {**audited, "reason": str(exc)[:200]},
+                        decision=decision,
                         correlation_id=correlation_id,
                     )
                 continue
@@ -292,7 +408,7 @@ def build_graph(
                 audit.append(
                     run_id=state.get("run_id", ""),
                     actor="loom",
-                    tool=call["name"],
+                    tool=canonical,
                     args=audited,
                     decision="executed",
                     correlation_id=correlation_id,
@@ -301,14 +417,33 @@ def build_graph(
 
     def post_turn(state: GraphState) -> dict:
         text = _last_human_text(state)
-        if state.get("scope_id"):
-            # Gate 7: a scoped run carries untrusted inbound as its input.
-            # Inbound content never writes memory and never reaches the
-            # episodic log, which later turns would re-inject as context.
+        if not text:
             return {}
-        if text:
-            _log_episodic_turn(settings.loom_data_dir, text)
-        if not text or not has_explicit_memory_intent(text):
+        scope_id = state.get("scope_id")
+        if scope_id:
+            # The memory write is an internal action, so it goes through the
+            # gateway's posture and leaves an audited refusal row: a scope
+            # whose memory_write is false (or one that no longer exists)
+            # writes nothing — no episodic row, no semantic entry, no facts.
+            try:
+                scope = ScopeStore(settings.loom_data_dir).get(scope_id)
+            except KeyError:
+                scope = None
+            if scope is None or not scope.memory_write:
+                try:
+                    audit.append(
+                        run_id=state.get("run_id", ""),
+                        actor="gateway",
+                        tool="memory.write",
+                        args={"scope_id": scope_id, "memory_write": scope.memory_write if scope else False},
+                        decision="rejected",
+                        correlation_id=scope.correlation_id if scope else None,
+                    )
+                except OSError as exc:
+                    logger.warning("memory-write refusal could not be audited", extra={"error": str(exc)})
+                return {}
+        _log_episodic_turn(settings.loom_data_dir, text)
+        if not has_explicit_memory_intent(text):
             return {}
         if contains_secret(text):
             logger.warning("refused to memorize message: it looks like it carries a secret")

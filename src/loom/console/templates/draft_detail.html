@@ -7,6 +7,8 @@
   <dd>{{ draft.to }}</dd>
   <dt>Subject</dt>
   <dd>{{ draft.subject }}</dd>
+  <dt>Category</dt>
+  <dd>{{ draft.category or "-" }}</dd>
   <dt>Created at</dt>
   <dd>{{ draft.created_at }}</dd>
   <dt>Status</dt>
@@ -14,4 +16,8 @@
   <dt>Body</dt>
   <dd><pre>{{ draft.body }}</pre></dd>
 </dl>
+<form method="post" action="/drafts/{{ draft.draft_id }}/mailbox">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button type="submit">Request mailbox draft (IMAP APPEND, needs approval)</button>
+</form>
 {% endblock %}

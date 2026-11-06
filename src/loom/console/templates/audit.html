@@ -6,14 +6,15 @@
 {% endif %}
 {% if rows %}
 <table>
-  <tr><th>Timestamp</th><th>Actor</th><th>Tool</th><th>Decision</th><th>Correlation</th></tr>
+  <tr><th>Timestamp</th><th>Actor</th><th>Tool</th><th>Decision</th><th>Args</th><th>Correlation</th></tr>
   {% for row in rows %}
   <tr>
     <td>{{ row.ts }}</td>
     <td>{{ row.actor }}</td>
     <td>{{ row.tool }}</td>
     <td>{{ row.decision }}</td>
-    <td>{{ row.get("correlation_id") or "-" }}</td>
+    <td>{{ row.args }}</td>
+    <td>{% if row.get("correlation_id") %}<a href="/audit?correlation_id={{ row.correlation_id }}">{{ row.correlation_id }}</a>{% else %}-{% endif %}</td>
   </tr>
   {% endfor %}
 </table>

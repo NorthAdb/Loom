@@ -70,8 +70,10 @@ def test_allowed_side_effect_gates_then_executes_with_the_correlation_id(tmp_pat
         "approved",
         "authorized",
         "executed",
+        "rejected",  # the post_turn memory write: the scope's memory_write is false (P1-1)
     ]
     assert all(record.get("correlation_id") == scope.correlation_id for record in records)
+    assert records[-1]["actor"] == "gateway" and records[-1]["tool"] == "memory.write"
 
 
 def test_forbidden_side_effect_never_reaches_the_human(tmp_path):

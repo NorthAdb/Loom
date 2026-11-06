@@ -4,15 +4,15 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Current:** Gate 1–5 are done on main tip `1711d1b`. Next is Gate 6 (Context OS, including Task State). [docs/STATUS.md](docs/STATUS.md) · [docs/ROADMAP.md](docs/ROADMAP.md).
+**Current:** Gates 1–7 are done on main. The Gate 6+7 joint-audit rework and the Gate 8 feature code (mail triage: read-only fetch -> scoped triage -> local draft; the mailbox IMAP draft stays a separate scope plus approval) are on this branch ahead of the joint re-review. Gate 8 is not Passed: it still needs ≥2 weeks of owner dogfood on real mail. [docs/STATUS.md](docs/STATUS.md) · [docs/ROADMAP.md](docs/ROADMAP.md).
 
-当前：Gate 1–5 已完成（main `1711d1b`），下一关是 Gate 6。进度见 [docs/STATUS.md](docs/STATUS.md)，计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+当前：Gate 1–7 已完成。Gate 6+7 返工与 Gate 8 功能代码（邮件 triage：只读拉取 -> 带 Scope 的分类 -> 本地草稿；写入邮箱草稿仍是独立 Scope 加审批）在本分支，待一次联合终审。Gate 8 未 Passed：还需 ≥2 周真实邮件自用。进度见 [docs/STATUS.md](docs/STATUS.md)，计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
-**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, the Phase 5 calendar + email drafts, the Phase 6 browser fill, and the Phase 7 budget, backup, eval, and CI are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, browser fill over headless Playwright chromium where open and fill prepare a page unapproved and submit waits for a human, tests). See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, the Phase 5 calendar + email drafts, the Phase 6 browser fill, the Phase 7 budget, backup, eval, and CI, the Gate 6 package model, task state machine, and Context OS, and the Gate 7 Request Scope, Tool Gateway, untrusted inbound seam, local-only drafts, and Operator Console are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log with `correlation_id`, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, browser fill over headless Playwright chromium where open and fill prepare a page unapproved and submit waits for a human, a task state machine with restart recovery and idempotent effects, episodic/digest/feedback/compact context, scoped runs that fail closed at a Tool Gateway, the four-view console on 127.0.0.1, tests). See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Loom is
 
-Loom is a personal agent the owner runs every day on one machine. Gate 1–5 is that loop in the tree: a local file sandbox, scheduled routines, a human approval gate, a memory baseline, calendar summaries, email drafts, and browser fill. The next bet is one Life Operator — untrusted inbound in, a gated life action out — and it starts at Gate 6. It is not built yet.
+Loom is a personal agent the owner runs every day on one machine. Gates 1–7 are that loop in the tree: a local file sandbox, scheduled routines, a human approval gate, a memory baseline plus a working Context OS, calendar summaries, email drafts, browser fill, and the Life Operator seam. Untrusted inbound comes in, a minimal Request Scope is issued, the Tool Gateway checks every call outside the model and fails closed, a human decides on the real payload, a local draft goes out, and every step lands in the audit log under one `correlation_id`. Gate 8 puts real mail behind that seam.
 
 Product boundaries and the locked decisions (2026-10-30, extended 2026-11-04) live in [docs/VISION.md](docs/VISION.md) and [docs/DECISIONS.md](docs/DECISIONS.md).
 
@@ -30,21 +30,24 @@ Product boundaries and the locked decisions (2026-10-30, extended 2026-11-04) li
 
 ## Architecture
 
-The LangGraph loop, the sandbox layer, and the memory baseline are built; MCP, Request Scope, and the Operator Console are not. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
+The LangGraph loop, the sandbox layer, the memory baseline, Request Scope, the Tool Gateway, the mail triage path, the MCP registry, and the Operator Console are in the tree. Gate 8 awaits its ≥2-week dogfood window and Gate 9 its joint review before either claims Passed. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
 
-Built through Gate 5:
+Built through Gate 7:
 
 ```text
-person / scheduler
+person / scheduler / inbound
         │
         ▼
-   LangGraph  ──►  memory (Mem0 + owned facts/preferences)
+   LangGraph  ──►  memory (facts + Mem0 + Context OS)
         │
         ▼
- approval gate
+ Request Scope + Tool Gateway (fail closed)
         │
         ▼
-  tools / MCP  ──►  local Docker sandbox
+ approval gate (human, on the full payload)
+        │
+        ▼
+  tools  ──►  sandbox / calendar / mail drafts / browser
 ```
 
 Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the skeleton.
@@ -56,7 +59,8 @@ Pi may later sit under LangGraph as an exec or sub-agent. It is not part of the 
 | Language | Python | Engineering shell, core loop |
 | Orchestration | LangGraph | Core loop with approval gate |
 | Optional later | Pi as exec / sub-agent | Absent |
-| Memory | Facts table plus optional Mem0; light Context OS and Task State are Gate 6 | Facts table + self-hosted Mem0 baseline. Digest and Task State are not built |
+| Memory | Facts table plus optional Mem0, plus the Context OS (episodic, digest, feedback, compact) | Facts table + self-hosted Mem0 + Context OS in the tree |
+| Console | FastAPI + Jinja2 + HTMX, bound to 127.0.0.1 | Operator Console over Inbox / Draft / Approval / Audit (Gate 7) |
 | Browser | Playwright (headless chromium) behind the `browser` extra | Browser fill with an allowlisted transport and a human-gated submit |
 | Runtime | Local / single-host Docker | Sandbox service (compose) |
 | CI | GitHub Actions | ruff + pytest on 3.11/3.12, advisory pip-audit |
@@ -202,6 +206,49 @@ A keyless demo of the closed loop (accept -> scoped triage -> approval -> one lo
 python scripts/demo_gate7_inbound.py
 ```
 
+### Mail triage (Gate 8)
+
+Real mail comes in through a read-only IMAP fetch — the same `LOOM_IMAP_*` / `LOOM_MAIL_*` variables the draft tools use, nothing new to configure — and every write stays local by default. The console flow:
+
+1. Inbox → **Fetch mail**: the transport EXAMINEs the INBOX read-only (`BODY.PEEK`, nothing on the server is marked or moved) and new messages enter the inbound seam, each creating a triage task and a draft-only Request Scope. Fetched mail is untrusted: From is not the owner; bodies are data, never instructions.
+2. **Triage** (per-message button, or `loom triage <message_id>`): the message is classified into exactly one of reply / action / reading / archive and a local draft is proposed under that category. The proposal pauses for approval with the full to/subject/body visible; approving writes one `local_only` record to `drafts.json` and nothing else.
+3. Optional, from the Draft view: **Request mailbox draft** copies that local draft into the mailbox's drafts folder over IMAP APPEND. That is layer 4: a separate Request Scope, a separate approval, the same gateway and audit; the mailbox draft is never sent either.
+
+The side-effect layers (ADR-016), locked:
+
+| Layer | Action | Default? | Scope / approval |
+| --- | --- | --- | --- |
+| 1 | Read (fetch headers and a capped body into the local inbox) | yes | read via the read-only transport |
+| 2 | Local classification + local draft | **yes (the default write)** | draft-only scope; approval to write |
+| 3 | Mailbox labels / read state | no | off; its own action if ever enabled |
+| 4 | Mailbox draft via IMAP APPEND | no | the Gate 3 tools; separate scope + approval |
+| 5 | Send | **never** | no tool, no route, `send_permission` structurally false |
+
+A no-key demo of the whole path (sanitized sample, scripted model, fake transports):
+
+```bash
+python scripts/demo_gate8_mail_triage.py
+```
+
+邮件分类（Gate 8）：真实邮件经只读 IMAP 拉取（复用 `LOOM_IMAP_*` / `LOOM_MAIL_*`，无新配置），默认只写本地草稿。Console 流程：Inbox 里 Fetch（只读 EXAMINE + BODY.PEEK，不改动服务器状态）为每封信建 triage 任务与「仅草稿」Scope → Triage（或 `loom triage <message_id>`）把信分类为 reply/action/reading/archive 并提议本地草稿，审批展示完整收件人/主题/正文，批准后只落 `drafts.json`。可选的「写入邮箱草稿」是第 4 层：单独 Scope、单独审批、同一网关与审计，同样绝不发送；第 3 层（标签/已读）默认关闭，第 5 层（发送）不存在。试运行：`python scripts/demo_gate8_mail_triage.py`（无需 key 与网络）。
+
+### MCP servers (Gate 9)
+
+MCP servers join the same lifecycle as every other capability. What registers:
+
+1. `loom mcp register --id notes --name "Canned notes" --command '["python", "notes_server.py"]' --allow notes_search,notes_count` probes the stdio server once (initialize + tools/list), validates every `--allow` name against the live listing (a typo refuses, naming what the server actually offers), and stores a record in `<data dir>/mcp_servers.json`: the command, a **schema fingerprint** (sha256 over the canonical JSON of the tool list — key order and whitespace never matter, any reviewed byte does), the allowed subset, and the credential env-var NAME. `--force` overwrites an existing registration and freezes it; `loom mcp list`, `loom mcp revoke <id>`, and `loom mcp review <id>` round the lifecycle out.
+2. A schema change freezes: every call re-reads the record and re-verifies the fingerprint live, so a server that adds, removes, or rewords a tool is refused on its next call and stays frozen until a human runs `loom mcp review`.
+3. Calls are actions, not free turns: every call carries the name `mcp:<server_id>:<tool>`, runs `side_effect=True` through the Tool Gateway, needs the name in the Request Scope's `allowed_actions`, and is audited. A tool outside the registered subset has no spec at all — the model cannot reach it.
+4. Credentials are handles: the registry stores the env-var NAME (`--credential-env LOOM_NOTES_TOKEN`), the client maps that name to its current value in the child process, and the value never enters the model, git, the audit body, or a backup. Tool return values are untrusted data: they reach the model as text and write nothing — no facts, no scope widening, no send.
+
+MCP is off by default; an entrypoint enables it deliberately. A no-key demo (two read-only fixture servers, one deliberate over-privilege denial, one fingerprint-tamper freeze, and the review that un-freezes):
+
+```bash
+python scripts/demo_gate9_mcp.py
+```
+
+MCP 服务器（Gate 9）：`loom mcp register` 探测一次 stdio 服务器，记录 schema 指纹（工具列表的规范化 JSON 之 sha256）与允许的工具子集；schema 变更或 `--force` 重注册都会冻结服务器，直到 `loom mcp review` 人工复审。每次调用都是 `mcp:<server_id>:<tool>` 动作，走 Tool Gateway、需 Scope 授权、进审计；凭据只存环境变量名（值永不入库、进 git、进审计、进备份）；工具返回值是不可信数据——不写 facts、不扩权、无 send。MCP 默认关闭，由入口显式开启。试运行：`python scripts/demo_gate9_mcp.py`。
+
 ### Sandbox
 
 File tools work only inside the sandbox jail. Two transports, one rule set:
@@ -287,6 +334,7 @@ The every-day loop, in one place:
 loom chat                        # the REPL; side-effect tools pause for approve/reject
 loom worker                      # keep routines firing on their cron schedules
 loom approvals list              # resolve anything the gate held while you were away
+loom triage <message_id>         # run one inbox message through triage; a draft waits for approval
 loom memory facts                # what Loom firmly knows; `set`/`del` to author it
 loom memory digest|episodic|feedback|compact   # the working set: fold recent activity into the digest
 loom tasks list|show|recover     # the task state machine; recover after a restart
@@ -295,13 +343,15 @@ loom stats                       # budget, token spend, approval and failure cou
 loom eval                        # regression confidence: cases must stay green, the canary must stay red
 ```
 
+On the console, Inbox carries the **Fetch mail** button and a per-message **Triage** button, and a Draft can be copied to the mailbox drafts folder after its own approval (all three POST through the same session/CSRF/Origin boundary as an approval). 控制台的 Inbox 有 Fetch 与逐条 Triage 按钮，Draft 视图可发起「写入邮箱草稿」请求——三者与审批走同一套 session/CSRF/Origin 边界。
+
 Set a spending brake in `.env` before going hands-off: `LOOM_DAILY_BUDGET_TOKENS=200000` refuses new chat turns and routine runs once the day's estimate reaches the line (0 = unlimited), and the refusal lands in the audit log with `decision=rejected`. `LOOM_TOKEN_PRICE_USD_PER_1K` is optional and only turns the `loom stats` token count into a dollars estimate.
 
 预算与日常运维：`LOOM_DAILY_BUDGET_TOKENS` 是每日 token 闸（0 为不限），到达后新的 chat 回合与例程运行都会被拒绝并写入审计（`decision=rejected`）；`loom stats` 汇总预算、用量与审计计数；`loom eval` 跑回归评测，用例必须保持绿、canary 必须保持红。
 
 ### Demos
 
-Seven keyless demos (scripted models, local fixtures) each prove one path end to end:
+Eleven keyless demos (scripted models, local fixtures) each prove one path end to end; the browser one additionally needs chromium:
 
 ```bash
 python scripts/demo_gate1.py                # core loop: harmless tools answer, side effects gate
@@ -309,22 +359,23 @@ python scripts/demo_gate2.py                # sandbox tidy with approved writes
 python scripts/demo_gate2_routines.py       # routine triggers and the pending approval queue
 python scripts/demo_gate3_memory.py         # facts, the memory note, and the explicit write-back
 python scripts/demo_gate3_calendar_mail.py  # calendar summaries and draft gating
-python scripts/demo_gate4_browser.py        # browser fill behind the human gate
+python scripts/demo_gate4_browser.py        # browser fill behind the human gate (needs chromium)
 python scripts/demo_gate5.py                # budget brake, backup/restore, eval summary
-```
 python scripts/demo_gate6_tasks.py          # task state machine and the Context OS (Gate 6)
 python scripts/demo_gate7_inbound.py        # simulated inbound loop: scope, gateway, local draft (Gate 7)
+python scripts/demo_gate8_mail_triage.py    # real-shaped mail: fetch, scoped triage, local draft, layer 4 (Gate 8)
+python scripts/demo_gate9_mcp.py            # MCP under the same gates: fingerprint, freeze, review (Gate 9)
 ```
 
 ### Backup and restore
 
-`loom backup [destination]` zips the five data-dir roots — `facts.db`, `routines.json`, `approvals/`, `audit/`, `checkpoints/` — into `loom-backup-<timestamp>.zip` (destination defaults to `./backups`). Nothing else is included: `.env`, spend ledgers, and the semantic-memory store never enter an archive, so a backup cannot become a secrets exfiltration path. Run it while Loom is idle; `facts.db` is captured as the file stands.
+`loom backup [destination]` zips the nine data-dir roots — `facts.db`, `routines.json`, `tasks.db`, `context.db`, `drafts.json`, `approvals/`, `audit/`, `checkpoints/`, `inbound/` — into `loom-backup-<timestamp>.zip` (destination defaults to `./backups`). Nothing else is included: `.env`, spend ledgers, the semantic-memory store, `mcp_servers.json`, and `scopes.json` (a restore revokes authorizations instead of silently re-granting them, ADR-019) never enter an archive, so a backup cannot become a secrets exfiltration path. Run it while Loom is idle; `facts.db` is captured as the file stands.
 
 `loom restore <archive> [--force]` writes the archive's members back into the data dir. It refuses when a target file already exists unless you pass `--force`, and it refuses any archive member that would land outside the data dir. The drill:
 
 ```bash
 loom backup ./backups                                     # 1. archive the current state
-rm -rf "$LOOM_DATA_DIR"/{facts.db,routines.json,approvals,audit,checkpoints}
+rm -rf "$LOOM_DATA_DIR"/{facts.db,routines.json,tasks.db,context.db,drafts.json,approvals,audit,checkpoints,inbound}
 loom restore ./backups/loom-backup-<stamp>.zip             # 2. restore after a wipe
 loom memory facts                                          # 3. the facts are back
 ```
@@ -335,7 +386,7 @@ loom memory facts                                          # 3. the facts are ba
 
 - [docs/README.md](docs/README.md) — which file owns progress, the plan, and decisions
 - [docs/VISION.md](docs/VISION.md) — vision and boundaries
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target layers, with Gate 6+ marked unbuilt
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target layers, with the Gate 8/9 feature code in the tree and neither gate Passed yet
 - [docs/DECISIONS.md](docs/DECISIONS.md) — locked choices
 - [docs/RESUME_STORY.md](docs/RESUME_STORY.md) — what this repository demonstrates, with reproducible numbers
 - [docs/ROADMAP.md](docs/ROADMAP.md) — Gate 6+ plan (Gate 1–5 are done)

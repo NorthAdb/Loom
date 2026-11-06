@@ -9,6 +9,7 @@ never import from tests/ or conftest.
 
 import json
 import shutil
+import sys
 import tempfile
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -24,6 +25,8 @@ from langgraph.types import Command
 from loom.audit.log import AuditLog
 from loom.core.config import Settings
 from loom.core.graph import build_graph
+from loom.gateway.scope import ScopeStore, issue_scope
+from loom.gateway.tool_gateway import ToolGateway
 from loom.memory import FactsStore
 from loom.ops.budget import BudgetGuard, SpendLedger, turn_tokens
 from loom.tools.browser import (
@@ -34,8 +37,11 @@ from loom.tools.browser import (
     _ensure_allowed,
     _parse_allowed_hosts,
 )
+from loom.tools.mcp import McpServerStore, build_mcp_registry, register_server
 
 BUDGET_REJECTED_REASON = "daily budget exceeded"
+_REPO = Path(__file__).resolve().parents[3]
+_MCP_FIXTURE_SERVERS = ("notes", "clock")
 
 _EXPECT_TYPES = {
     "interrupted": bool,
@@ -46,6 +52,14 @@ _EXPECT_TYPES = {
     "mail_appended": int,
     "audit_budget_rejected": bool,
     "spend_recorded": bool,
+    "facts_count": int,
+    # Behavior keys (P1-4): the judge reads the audit log, the sandbox, and
+    # the MCP store, so a refusal is provable and a scripted closing sentence
+    # alone can never pass a negative case.
+    "rejected_audit_tool": str,
+    "no_executed_audit_tool": str,
+    "file_absent": str,
+    "needs_review": str,
 }
 
 
@@ -58,6 +72,14 @@ class EvalCase:
     is the auto-decision when the graph interrupts; None means the case must
     not interrupt at all. `ics` may contain a "{today}" token, replaced with
     the run date in the settings timezone (a static file cannot name today).
+    `scope`, when present, models inbound: the harness issues a real Request
+    Scope (`allowed_actions`, `memory_write` default false, `authenticated`
+    default true) and invokes the graph with its id, so the gateway checks
+    every call exactly as a triage run's would be. With `authenticated` false
+    no scope is issued and the run is unscoped. `mcp`, when present, registers
+    the named fixture server(s) in the case's data dir and merges the MCP
+    registry into the graph (ADR-020); each entry is {"id", "server", "allow"}
+    with an optional "fingerprint_override" that simulates schema drift.
     """
 
     name: str
@@ -71,6 +93,8 @@ class EvalCase:
     browser_allowed_hosts: str = ""
     ics: str | None = None
     mail: bool = False
+    scope: dict | None = None
+    mcp: "list[dict] | None" = None
     expect: dict[str, Any] = field(default_factory=dict)
     expect_fail: bool = False
 
@@ -113,6 +137,14 @@ class EvalCase:
         ics = raw.get("ics")
         need(ics is None or isinstance(ics, str), "'ics' must be a string")
         need(isinstance(raw.get("mail", False), bool), "'mail' must be a boolean")
+        scope = raw.get("scope")
+        need(scope is None or _is_scope(scope), "'scope' must be {\"allowed_actions\": [str], \"memory_write\": bool, \"authenticated\": bool}")
+        mcp = raw.get("mcp")
+        need(
+            mcp is None or (isinstance(mcp, list) and all(_is_mcp_entry(entry) for entry in mcp)),
+            "'mcp' must be a list of {\"id\", \"server\", \"allow\"} entries naming a fixture server "
+            f"(one of: {', '.join(_MCP_FIXTURE_SERVERS)})",
+        )
         expect = raw.get("expect", {})
         need(isinstance(expect, dict), "'expect' must be an object")
         for key, value in expect.items():
@@ -131,6 +163,8 @@ class EvalCase:
             browser_allowed_hosts=raw.get("browser_allowed_hosts", ""),
             ics=ics,
             mail=raw.get("mail", False),
+            scope=scope,
+            mcp=mcp,
             expect=expect,
             expect_fail=raw.get("expect_fail", False),
         )
@@ -267,6 +301,50 @@ def _is_step(step) -> bool:
     return isinstance(step, dict) and isinstance(step.get("tool"), str) and isinstance(step.get("args"), dict)
 
 
+def _is_scope(spec) -> bool:
+    return (
+        isinstance(spec, dict)
+        and isinstance(spec.get("allowed_actions", []), list)
+        and all(isinstance(action, str) for action in spec.get("allowed_actions", []))
+        and isinstance(spec.get("memory_write", False), bool)
+        and isinstance(spec.get("authenticated", True), bool)
+    )
+
+
+def _is_mcp_entry(entry) -> bool:
+    return (
+        isinstance(entry, dict)
+        and isinstance(entry.get("id"), str)
+        and bool(entry["id"].strip())
+        and entry.get("server") in _MCP_FIXTURE_SERVERS
+        and isinstance(entry.get("allow"), list)
+        and all(isinstance(name, str) and bool(name) for name in entry["allow"])
+        and isinstance(entry.get("fingerprint_override", ""), str)
+    )
+
+
+def _register_mcp_fixtures(case: EvalCase, data_dir: Path, settings: Settings) -> dict:
+    """Register the case's fixture servers and return the MCP registry for the graph build.
+
+    A "fingerprint_override" writes a wrong fingerprint after registration,
+    simulating the drift a re-reviewed server would have to be frozen for.
+    """
+    store = McpServerStore(data_dir)
+    for entry in case.mcp or []:
+        script = _REPO / "fixtures" / "mcp" / f"{entry['server']}_server.py"
+        register_server(
+            store,
+            server_id=entry["id"],
+            name=entry["id"],
+            command=[sys.executable, str(script)],
+            allowed_tools=[str(name) for name in entry["allow"]],
+        )
+        override = entry.get("fingerprint_override", "")
+        if override:
+            store.set_status(entry["id"], schema_fingerprint=override)
+    return build_mcp_registry(settings)
+
+
 def _is_page(spec) -> bool:
     return (
         isinstance(spec, dict)
@@ -395,9 +473,26 @@ def _has_spend_for(data_dir: Path, run_id: str) -> bool:
 _CONTAINS_KEYS = frozenset({"final_contains", "memory_note_contains"})
 
 
-def _judge(case: EvalCase, *, interrupted, unplanned_tools, refused, result, transports, data_dir: Path) -> CaseResult:
+def _production_gateway(data_dir: Path) -> ToolGateway:
+    """The same gateway open_graph builds: the eval graph is the production graph."""
+    return ToolGateway(AuditLog(data_dir), ScopeStore(data_dir), allow_unscoped=True)
+
+
+def _audit_rows(data_dir: Path) -> "list[dict]":
+    rows: list[dict] = []
+    for path in sorted((Path(data_dir) / "audit").glob("*.jsonl")):
+        rows.extend(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    return rows
+
+
+def _judge(
+    case: EvalCase, *, interrupted, unplanned_tools, refused, result, transports, data_dir: Path, sandbox_root: Path
+) -> CaseResult:
     if unplanned_tools:
         return CaseResult(case.name, False, f"interrupted but the case declares no gate ({unplanned_tools})", case.expect_fail)
+    rows = _audit_rows(data_dir)
+    rejected_tools = {row.get("tool") for row in rows if row.get("decision") == "rejected"}
+    executed_tools = {row.get("tool") for row in rows if row.get("decision") == "executed"}
     checks = {
         "interrupted": interrupted,
         "refused": refused,
@@ -407,10 +502,25 @@ def _judge(case: EvalCase, *, interrupted, unplanned_tools, refused, result, tra
         "mail_appended": len(getattr(transports.get("mail"), "appended", ())),
         "audit_budget_rejected": _has_budget_rejection(data_dir),
         "spend_recorded": _has_spend_for(data_dir, case.name),
+        "facts_count": len(FactsStore(data_dir).list()),
     }
     for key, expected in case.expect.items():
-        actual = checks[key]
-        held = expected in actual if key in _CONTAINS_KEYS else actual == expected
+        if key == "rejected_audit_tool":
+            # P1-4: the refusal is provable in the audit log, not the script's last word.
+            held = expected in rejected_tools
+            actual = sorted(rejected_tools)
+        elif key == "no_executed_audit_tool":
+            held = expected not in executed_tools
+            actual = sorted(executed_tools)
+        elif key == "file_absent":
+            held = not (Path(sandbox_root) / str(expected)).exists()
+            actual = f"sandbox/{expected} exists: {(Path(sandbox_root) / str(expected)).exists()}"
+        elif key == "needs_review":
+            held = McpServerStore(data_dir).get(str(expected)).needs_review
+            actual = f"server {expected} needs_review={held}"
+        else:
+            actual = checks[key]
+            held = expected in actual if key in _CONTAINS_KEYS else actual == expected
         if not held:
             return CaseResult(case.name, False, f"expected {key}={expected!r}, got {actual!r}", case.expect_fail)
     return CaseResult(case.name, True, "", case.expect_fail)
@@ -426,7 +536,29 @@ def _run_case(case: EvalCase, data_dir: Path, sandbox_root: Path) -> CaseResult:
         transports = _transports(case, ZoneInfo(settings.timezone_name))
         script = [tool_call_msg(step["tool"], step["args"]) for step in case.steps]
         script.append(AIMessage(content=case.final))
-        graph = build_graph(ScriptedChatModel(messages=iter(script)), settings, transports=transports)
+        extra_registry = _register_mcp_fixtures(case, data_dir, settings) if case.mcp else None
+        graph = build_graph(
+            ScriptedChatModel(messages=iter(script)),
+            settings,
+            transports=transports,
+            gateway=_production_gateway(data_dir),
+            extra_registry=extra_registry,
+        )
+
+        scope_id = None
+        if case.scope is not None and case.scope.get("authenticated", True):
+            # The inbound posture: a real scope in the real store, so the
+            # gateway's checks are the production checks, not a test double.
+            scope = issue_scope(
+                "owner",
+                "eval",
+                "eval-resource",
+                case.scope.get("allowed_actions", []),
+                memory_write=case.scope.get("memory_write", False),
+                approval_required=True,
+            )
+            ScopeStore(data_dir).add(scope)
+            scope_id = scope.scope_id
 
         guard = _budget_guard(case, data_dir)
         interrupted = False
@@ -437,7 +569,9 @@ def _run_case(case: EvalCase, data_dir: Path, sandbox_root: Path) -> CaseResult:
             refused = True
         else:
             config = {"configurable": {"thread_id": case.name}}
-            result = graph.invoke({"messages": [HumanMessage(content=case.user)], "run_id": case.name}, config)
+            result = graph.invoke(
+                {"messages": [HumanMessage(content=case.user)], "run_id": case.name, "scope_id": scope_id}, config
+            )
             while "__interrupt__" in result:
                 if case.gate is None:
                     unplanned_tools = ", ".join(item["name"] for item in result["__interrupt__"][0].value["tools"])
@@ -454,6 +588,7 @@ def _run_case(case: EvalCase, data_dir: Path, sandbox_root: Path) -> CaseResult:
             result=result,
             transports=transports,
             data_dir=data_dir,
+            sandbox_root=sandbox_root,
         )
     finally:
         # The checkpointer's sqlite connection must close before the temp dir

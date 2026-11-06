@@ -16,12 +16,12 @@ from pathlib import Path
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
-from loom import eval as loom_eval
 from loom.audit.log import AuditLog
-from loom.cli import chat_session
+from loom.cli.main import chat_session
 from loom.core.config import Settings
 from loom.core.graph import build_graph
 from loom.memory import FactsStore
+from loom.ops import eval as loom_eval
 from loom.ops.backup import BACKUP_ROOTS, create_backup, restore_backup
 from loom.ops.budget import BudgetGuard, SpendLedger
 from loom.ops.routines import Routine, RoutineStore

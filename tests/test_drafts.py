@@ -1,5 +1,7 @@
 """The local draft path: draft_create_local writes a record and there is no send anywhere."""
 
+import json
+
 import pytest
 
 from loom.core.config import Settings
@@ -40,6 +42,36 @@ def test_draft_create_local_refuses_oversized_content(tmp_path):
     with pytest.raises(ValueError, match="character limit"):
         registry["draft_create_local"].func.invoke({"to": "a@b.c", "subject": "s", "body": "x" * 10_001})
     assert DraftStore(tmp_path).list() == []
+
+
+def test_draft_create_local_carries_and_validates_the_category(tmp_path):
+    registry, _ = _registry(tmp_path)
+
+    registry["draft_create_local"].func.invoke(
+        {"to": "landlord@example.com", "subject": "Heating bill", "body": "We agree.", "category": "reply"}
+    )
+
+    drafts = DraftStore(tmp_path).list()
+    assert len(drafts) == 1 and drafts[0].category == "reply"
+
+    with pytest.raises(ValueError, match="category must be one of"):
+        registry["draft_create_local"].func.invoke(
+            {"to": "a@b.c", "subject": "s", "body": "b", "category": "send-it"}
+        )
+    assert len(DraftStore(tmp_path).list()) == 1  # the refused category wrote nothing
+
+
+def test_old_draft_records_load_with_an_empty_category(tmp_path):
+    store = DraftStore(tmp_path)
+    store.add(to="a@b.c", subject="s", body="b")
+    path = tmp_path / "drafts.json"
+    record = json.loads(path.read_text(encoding="utf-8"))[0]
+    del record["category"]
+    path.write_text(json.dumps([record]), encoding="utf-8")
+
+    loaded = DraftStore(tmp_path).list()
+
+    assert len(loaded) == 1 and loaded[0].category == ""
 
 
 def test_no_send_symbol_exists_anywhere_in_the_registry_or_drafts(tmp_path):
