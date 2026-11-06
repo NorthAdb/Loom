@@ -4,9 +4,9 @@ Self-hosted personal agent for one person. Daily self-use has to be reliable bef
 
 Loom 是自托管的个人代理：先在单机上把每天真正用起来这件事做稳（人工确认、记忆、例行任务），再扩展更多日常场景。编排用 LangGraph，运行在本机 Docker 上。
 
-**Current:** Gates 1–7 are done on main. The Gate 6+7 joint-audit rework and the Gate 8 feature code (mail triage: read-only fetch -> scoped triage -> local draft; the mailbox IMAP draft stays a separate scope plus approval) are on this branch ahead of the joint re-review. Gate 8 is not Passed: it still needs ≥2 weeks of owner dogfood on real mail. [docs/STATUS.md](docs/STATUS.md) · [docs/ROADMAP.md](docs/ROADMAP.md).
+**Current:** Gates 1–7 and Gate 9 are done on main tip `6b88f20` (PR #24). Gate 8 feature code (mail triage: read-only fetch -> scoped triage -> local draft; the mailbox IMAP draft stays a separate scope plus approval) is on that main tip but Gate 8 is not Passed: it still needs ≥2 weeks of owner dogfood on real mail. Status authority: [docs/STATUS.md](docs/STATUS.md) · [docs/ROADMAP.md](docs/ROADMAP.md).
 
-当前：Gate 1–7 已完成。Gate 6+7 返工与 Gate 8 功能代码（邮件 triage：只读拉取 -> 带 Scope 的分类 -> 本地草稿；写入邮箱草稿仍是独立 Scope 加审批）在本分支，待一次联合终审。Gate 8 未 Passed：还需 ≥2 周真实邮件自用。进度见 [docs/STATUS.md](docs/STATUS.md)，计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+当前：Gate 1–7 与 Gate 9 已在 main `6b88f20`（PR #24）完成。Gate 8 功能代码（邮件 triage：只读拉取 -> 带 Scope 的分类 -> 本地草稿；写入邮箱草稿仍是独立 Scope 加审批）已在该 tip，但 Gate 8 未 Passed：还需 ≥2 周真实邮件自用。进度以 [docs/STATUS.md](docs/STATUS.md) 为准，计划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 **Status:** Phase 0 engineering shell, the Phase 1 core loop, the Phase 2 file sandbox, Phase 3 scheduled routines, the Phase 4 memory baseline, the Phase 5 calendar + email drafts, the Phase 6 browser fill, the Phase 7 budget, backup, eval, and CI, the Gate 6 package model, task state machine, and Context OS, and the Gate 7 Request Scope, Tool Gateway, untrusted inbound seam, local-only drafts, and Operator Console are in place (installable package, config, structured logging, `loom version` / `loom doctor`, LangGraph chat loop with an approval gate, audit log with `correlation_id`, sqlite checkpoints, a jailed local file sandbox with local and HTTP transports, an optional Docker sandbox service, cron-scheduled routines over the same graph with an unattended pending approval queue and `loom worker`, a facts table plus self-hosted Mem0 semantic memory with per-turn note injection and a `loom memory` CLI, read-only ICS calendar summaries and draft-only IMAP mail tools behind the approval gate, browser fill over headless Playwright chromium where open and fill prepare a page unapproved and submit waits for a human, a task state machine with restart recovery and idempotent effects, episodic/digest/feedback/compact context, scoped runs that fail closed at a Tool Gateway, the four-view console on 127.0.0.1, tests). See [docs/STATUS.md](docs/STATUS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -30,7 +30,7 @@ Product boundaries and the locked decisions (2026-10-30, extended 2026-11-04) li
 
 ## Architecture
 
-The LangGraph loop, the sandbox layer, the memory baseline, Request Scope, the Tool Gateway, the mail triage path, the MCP registry, and the Operator Console are in the tree. Gate 8 awaits its ≥2-week dogfood window and Gate 9 its joint review before either claims Passed. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
+The LangGraph loop, the sandbox layer, the memory baseline, Request Scope, the Tool Gateway, the mail triage path, the MCP registry, and the Operator Console are in the tree. Gate 9 is Passed on main; Gate 8 awaits its ≥2-week dogfood window before claiming Passed. Full notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security rules: [docs/SECURITY.md](docs/SECURITY.md).
 
 Built through Gate 7:
 
@@ -386,7 +386,7 @@ loom memory facts                                          # 3. the facts are ba
 
 - [docs/README.md](docs/README.md) — which file owns progress, the plan, and decisions
 - [docs/VISION.md](docs/VISION.md) — vision and boundaries
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target layers, with the Gate 8/9 feature code in the tree and neither gate Passed yet
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target layers, with Gate 9 Passed and Gate 8 feature code in the tree (Gate 8 dogfood still open)
 - [docs/DECISIONS.md](docs/DECISIONS.md) — locked choices
 - [docs/RESUME_STORY.md](docs/RESUME_STORY.md) — what this repository demonstrates, with reproducible numbers
 - [docs/ROADMAP.md](docs/ROADMAP.md) — Gate 6+ plan (Gate 1–5 are done)
